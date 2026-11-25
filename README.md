@@ -39,7 +39,8 @@ plan.execute(fft::Direction::Forward, in.data(), out.data());
 
 Normalization options: `None`, `Forward`, `Inverse` (default), `Ortho`.
 Input and output buffers must not overlap (in-place is not supported yet).
-The planner uses radix-4 for powers of four, radix-2 for other powers of two, mixed-radix for other composite lengths, and a direct DFT for primes. Mixed-radix execution allocates a scratch buffer of the transform length.
+The planner uses radix-4 for powers of four, radix-2 for other powers of two, mixed-radix for other composite lengths, and a direct DFT for primes. Mixed-radix execution needs a scratch buffer of the transform length: pass a
+`fft::Workspace` to reuse it across calls, or let the plan allocate one per call.
 A plan is immutable and can be shared across threads that use their own buffers.
 `fft::Workspace` is provided for caller-owned scratch memory, but no transform
 uses it yet.

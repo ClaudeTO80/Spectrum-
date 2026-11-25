@@ -8,6 +8,7 @@
 #include "fft_export.hpp"
 #include "shape.hpp"
 #include "types.hpp"
+#include "workspace.hpp"
 
 namespace fft {
 
@@ -76,6 +77,14 @@ public:
     [[nodiscard]] Algorithm algorithm() const noexcept;
 
     /**
+     * @brief Scratch elements that execute(..., Workspace&) needs for this plan.
+     *
+     * Non-zero only for MixedRadix, where it equals size(). A Workspace of this
+     * capacity, reused across calls, makes execution allocation-free.
+     */
+    [[nodiscard]] std::size_t workspace_size() const noexcept;
+
+    /**
      * @brief Executes the transform on @c size() complex elements.
      *
      * @param direction Forward or Inverse.
@@ -85,11 +94,34 @@ public:
      * @throws InvalidBufferException if a pointer is null or the buffers overlap.
      * @throws FFTException if the plan was moved from.
      *
-     * @note MixedRadix execution allocates a scratch buffer of size() elements.
+     * @note This overload creates a temporary workspace. For MixedRadix that
+     *       allocates size() elements on every call; use the overload below
+     *       to reuse a workspace.
      */
     void execute(Direction direction,
                  const std::complex<T>* in,
                  std::complex<T>* out) const;
+
+    /**
+     * @brief Executes the transform using caller-owned scratch memory.
+     *
+     * Behaves as the three-argument overload. The workspace is grown to
+     * workspace_size() if its capacity is smaller, and is otherwise used as is,
+     * so repeated calls with the same workspace do not allocate. A workspace
+     * must not be used by two calls at the same time.
+     *
+     * @param direction Forward or Inverse.
+     * @param in        Input buffer of size() elements. Must not be null.
+     * @param out       Output buffer of size() elements. Must not be null and
+     *                  must not overlap @p in.
+     * @param workspace Scratch memory, reused and possibly grown.
+     * @throws InvalidBufferException if a pointer is null or the buffers overlap.
+     * @throws FFTException if the plan was moved from.
+     */
+    void execute(Direction direction,
+                 const std::complex<T>* in,
+                 std::complex<T>* out,
+                 Workspace<T>& workspace) const;
 
 private:
     struct Impl;

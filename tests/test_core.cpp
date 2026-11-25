@@ -331,6 +331,62 @@ static void test_mixed_radix() {
 }
 
 /**
+ * @brief Verifies the workspace overload: sizing, reuse without reallocation,
+ *        growth, and agreement with the allocating overload.
+ */
+static void test_workspace_reuse() {
+    // Only MixedRadix needs scratch; the radix and DFT paths report zero.
+    FFT_TEST_CHECK(fft::FFTPlan<double>(64).workspace_size() == 0);
+    FFT_TEST_CHECK(fft::FFTPlan<double>(7).workspace_size() == 0);
+    FFT_TEST_CHECK(fft::FFTPlan<double>(360).workspace_size() == 360);
+
+    const std::size_t n = 360;
+    const auto x = make_input(n, 555u);
+    fft::FFTPlan<double> plan(n);
+
+    // Exact-size workspace: no reallocation across calls.
+    fft::Workspace<double> ws(plan.workspace_size());
+    FFT_TEST_CHECK(ws.capacity() == n);
+    const auto* before = ws.data();
+    std::vector<std::complex<double>> y1(n), y2(n), ref(n);
+    plan.execute(fft::Direction::Forward, x.data(), y1.data(), ws);
+    plan.execute(fft::Direction::Inverse, y1.data(), y2.data(), ws);
+    FFT_TEST_CHECK(ws.data() == before);
+    FFT_TEST_CHECK(ws.capacity() == n);
+
+    // Same results as the allocating overload, bit for bit.
+    plan.execute(fft::Direction::Forward, x.data(), ref.data());
+    for (std::size_t i = 0; i < n; ++i)
+        FFT_TEST_CHECK(y1[i] == ref[i]);
+
+    // Round trip through the workspace path.
+    for (std::size_t i = 0; i < n; ++i)
+        FFT_TEST_CHECK(std::abs(y2[i] - x[i]) < 1e-12);  // default Inverse scaling
+
+    // Undersized workspace grows to the required size.
+    fft::Workspace<double> small;
+    plan.execute(fft::Direction::Forward, x.data(), y1.data(), small);
+    FFT_TEST_CHECK(small.capacity() == n);
+
+    // One workspace serves plans of different lengths.
+    fft::FFTPlan<double> other(60);
+    const auto z = make_input(60, 9u);
+    std::vector<std::complex<double>> zy(60), zref(60);
+    other.execute(fft::Direction::Forward, z.data(), zy.data(), ws);
+    other.execute(fft::Direction::Forward, z.data(), zref.data());
+    for (std::size_t i = 0; i < 60; ++i)
+        FFT_TEST_CHECK(zy[i] == zref[i]);
+    FFT_TEST_CHECK(ws.capacity() == n);
+
+    // Radix paths leave an empty workspace untouched.
+    fft::FFTPlan<double> radix(64);
+    fft::Workspace<double> unused;
+    std::vector<std::complex<double>> rin(64, {1.0, 0.0}), rout(64);
+    radix.execute(fft::Direction::Forward, rin.data(), rout.data(), unused);
+    FFT_TEST_CHECK(unused.capacity() == 0);
+}
+
+/**
  * @brief Verifies that impulses and constants give the known spectra.
  */
 static void test_known_spectra() {
@@ -512,6 +568,7 @@ int main() {
     test_simple_api();
     test_radix_kernels();
     test_mixed_radix();
+    test_workspace_reuse();
     test_plan_metadata();
     test_invalid_sizes();
     test_shape_overflow();

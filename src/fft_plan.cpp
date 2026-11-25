@@ -440,9 +440,25 @@ Algorithm FFTPlan<T>::algorithm() const noexcept {
 }
 
 template<typename T>
+std::size_t FFTPlan<T>::workspace_size() const noexcept {
+    return impl_ && impl_->algorithm == Algorithm::MixedRadix ? impl_->length : 0;
+}
+
+template<typename T>
 void FFTPlan<T>::execute(Direction direction,
                          const std::complex<T>* in,
                          std::complex<T>* out) const {
+    // Empty until needed: radix paths never touch it, and an empty vector
+    // does not allocate.
+    Workspace<T> workspace;
+    execute(direction, in, out, workspace);
+}
+
+template<typename T>
+void FFTPlan<T>::execute(Direction direction,
+                         const std::complex<T>* in,
+                         std::complex<T>* out,
+                         Workspace<T>& workspace) const {
     if (!impl_)
         throw FFTException("FFTPlan::execute() called on a moved-from plan");
     if (in == nullptr || out == nullptr)
@@ -463,12 +479,12 @@ void FFTPlan<T>::execute(Direction direction,
             std::copy(in, in + n, out);
             radix2_in_place(impl_->stage_tw, n, impl_->swaps, inverse, out);
             break;
-        case Algorithm::MixedRadix: {
-            std::vector<std::complex<T>> scratch(n);
+        case Algorithm::MixedRadix:
+            if (workspace.capacity() < n)
+                workspace.resize(n);
             mixed_radix_rec(impl_->twiddles, impl_->factors, 0, in, 1, n, out,
-                            scratch.data(), inverse);
+                            workspace.data(), inverse);
             break;
-        }
         default:
             direct_dft(impl_->twiddles, inverse, in, out);
             break;
