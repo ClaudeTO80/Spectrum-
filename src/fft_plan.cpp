@@ -139,30 +139,38 @@ void direct_dft(const std::vector<std::complex<double>>& twiddles, bool inverse,
 
 /**
  * @brief In-place iterative radix-2 decimation-in-time FFT (Cooley-Tukey).
- * @param twiddles Table of exp(-2*pi*i*k/N), k in [0, N); N must be a power of two.
+ *
+ * The stage twiddles are read from @p stage_tw, laid out as, for each stage
+ * of length len = 2, 4, ..., N, the half = len/2 values W_len^k with
+ * W_len = exp(-2*pi*i/len). Access is contiguous in k, and the block loop is
+ * the outer loop, as in radix4_in_place.
+ *
+ * @param stage_tw Stage twiddle table in precision T, built by the plan.
+ * @param n        Transform length, a power of two.
  * @param swaps    Bit-reversal permutation, applied before the butterflies.
  * @param inverse  True for the inverse transform (conjugated twiddles).
  * @param data     N elements, transformed in place, before scaling.
  */
 template<typename T>
-void radix2_in_place(const std::vector<std::complex<double>>& twiddles,
+void radix2_in_place(const std::vector<std::complex<T>>& stage_tw, std::size_t n,
                      const SwapList& swaps, bool inverse, std::complex<T>* data) {
-    const std::size_t n = twiddles.size();
-
     for (const auto& [a, b] : swaps)
         std::swap(data[a], data[b]);
 
-    // Butterfly stages: combine pairs of sub-transforms of length len/2.
+    // Conjugation for the inverse transform, folded into a sign on the imaginary part.
+    const T sign = inverse ? T(-1) : T(1);
+
+    std::size_t offset = 0;
     for (std::size_t len = 2; len <= n; len <<= 1) {
         const std::size_t half = len >> 1;
-        const std::size_t stride = n / len;
+        const std::complex<T>* w = stage_tw.data() + offset;
+        offset += half;
+
         for (std::size_t start = 0; start < n; start += len) {
             for (std::size_t k = 0; k < half; ++k) {
-                const std::complex<double> wd = twiddles[k * stride];
-                const std::complex<T> w(static_cast<T>(wd.real()),
-                                        static_cast<T>(inverse ? -wd.imag() : wd.imag()));
+                const std::complex<T> wk(w[k].real(), sign * w[k].imag());
                 const std::complex<T> u = data[start + k];
-                const std::complex<T> v = cmul(data[start + k + half], w);
+                const std::complex<T> v = cmul(data[start + k + half], wk);
                 data[start + k] = u + v;
                 data[start + k + half] = u - v;
             }
@@ -243,8 +251,8 @@ void radix4_in_place(const std::vector<std::complex<T>>& stage_tw, std::size_t n
  * Holds the precomputed twiddle factors exp(-2*pi*i*k/N) for k in [0, N),
  * computed in double precision regardless of T; the permutation of the
  * selected algorithm as a list of swaps, so that execute() does no index
- * arithmetic for reordering; and, for Radix4, the per-stage twiddle table in
- * precision T, laid out for contiguous access.
+ * arithmetic for reordering; and, for Radix2 and Radix4, the per-stage twiddle
+ * table in precision T, laid out for contiguous access.
  */
 template<typename T>
 struct FFTPlan<T>::Impl {
@@ -275,7 +283,17 @@ struct FFTPlan<T>::Impl {
                         }
                 }
                 break;
-            case Algorithm::Radix2: swaps = build_bit_reversal_swaps(length); break;
+            case Algorithm::Radix2:
+                swaps = build_bit_reversal_swaps(length);
+                for (std::size_t len = 2; len <= length; len <<= 1) {
+                    const std::size_t half = len >> 1;
+                    const std::size_t stride = length / len;
+                    for (std::size_t k = 0; k < half; ++k) {
+                        const std::complex<double> wd = twiddles[k * stride];
+                        stage_tw.emplace_back(static_cast<T>(wd.real()), static_cast<T>(wd.imag()));
+                    }
+                }
+                break;
             default: break;
         }
     }
@@ -285,7 +303,7 @@ struct FFTPlan<T>::Impl {
     Algorithm algorithm;
     std::vector<std::complex<double>> twiddles;
     SwapList swaps;
-    std::vector<std::complex<T>> stage_tw;  // Radix4 only, see radix4_in_place.
+    std::vector<std::complex<T>> stage_tw;  // Radix2 and Radix4, see the kernels.
 };
 
 template<typename T>
@@ -353,7 +371,7 @@ void FFTPlan<T>::execute(Direction direction,
             break;
         case Algorithm::Radix2:
             std::copy(in, in + n, out);
-            radix2_in_place(impl_->twiddles, impl_->swaps, inverse, out);
+            radix2_in_place(impl_->stage_tw, n, impl_->swaps, inverse, out);
             break;
         default:
             direct_dft(impl_->twiddles, inverse, in, out);
