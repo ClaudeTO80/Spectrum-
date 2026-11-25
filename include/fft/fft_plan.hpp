@@ -14,8 +14,9 @@ namespace fft {
 /**
  * @brief Immutable 1D complex FFT plan for a given precision.
  *
- * The plan selects an algorithm at construction time: Radix2 (iterative
- * Cooley-Tukey) when the length is a power of two, DirectDFT otherwise.
+ * The plan selects an algorithm at construction time: Radix4 (iterative
+ * Cooley-Tukey) for powers of four, Radix2 for other powers of two, and
+ * DirectDFT otherwise.
  * It can then execute transforms of its length any number of times. Execution does not modify
  * the plan, so a single plan may be shared by concurrent callers.
  *
@@ -70,7 +71,7 @@ public:
     /** @brief Floating-point precision of the plan type @c T. */
     [[nodiscard]] Precision precision() const noexcept;
 
-    /** @brief Algorithm chosen at construction (Radix2 or DirectDFT); Unselected if moved from. */
+    /** @brief Algorithm chosen at construction; Unselected if moved from. */
     [[nodiscard]] Algorithm algorithm() const noexcept;
 
     /**

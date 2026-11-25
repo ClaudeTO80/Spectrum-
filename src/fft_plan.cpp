@@ -13,6 +13,33 @@
 
 namespace fft {
 
+namespace {
+
+/**
+ * @brief Returns true if @p n is a power of four greater than or equal to four.
+ *
+ * Lengths of one (4^0) are handled by the radix-2 path, which is a plain copy.
+ */
+bool is_power_of_four(std::size_t n) {
+    return n >= 4 && std::has_single_bit(n) && (std::countr_zero(n) % 2 == 0);
+}
+
+/**
+ * @brief Selects the algorithm for a transform length.
+ *
+ * Radix4 for powers of four, Radix2 for other powers of two, DirectDFT otherwise.
+ */
+Algorithm select_algorithm(std::size_t n) {
+    if (is_power_of_four(n))
+        return Algorithm::Radix4;
+    if (std::has_single_bit(n))
+        return Algorithm::Radix2;
+    return Algorithm::DirectDFT;
+}
+
+} // namespace
+
+
 /**
  * @brief Private state of an FFTPlan. Null in the owning object once moved from.
  *
@@ -44,9 +71,7 @@ struct FFTPlan<T>::Impl {
 
 template<typename T>
 FFTPlan<T>::FFTPlan(std::size_t size, Normalization normalization)
-    : impl_(std::make_unique<Impl>(
-          size, normalization,
-          std::has_single_bit(size) ? Algorithm::Radix2 : Algorithm::DirectDFT)) {}
+    : impl_(std::make_unique<Impl>(size, normalization, select_algorithm(size))) {}
 
 template<typename T>
 FFTPlan<T>::~FFTPlan() = default;
@@ -176,6 +201,85 @@ void radix2_in_place(const std::vector<std::complex<double>>& twiddles, bool inv
     }
 }
 
+
+/**
+ * @brief Permutes @p data into base-4 digit-reversed order, in place.
+ * @param data N elements, N a power of four.
+ */
+template<typename T>
+void digit_reverse_base4(std::complex<T>* data, std::size_t n) {
+    const std::size_t digits = static_cast<std::size_t>(std::countr_zero(n)) / 2;
+    for (std::size_t i = 0; i < n; ++i) {
+        std::size_t r = 0;
+        std::size_t x = i;
+        for (std::size_t d = 0; d < digits; ++d) {
+            r = (r << 2) | (x & 3u);
+            x >>= 2;
+        }
+        if (i < r)
+            std::swap(data[i], data[r]);
+    }
+}
+
+/**
+ * @brief In-place iterative radix-4 decimation-in-time FFT.
+ *
+ * Each stage combines four sub-transforms of length q = len/4 using the
+ * identity X[k + m*q] = sum_r W_len^(r*k) * Y_r[k] * (W_4^(r*m)), where
+ * W_4 = -i for the forward transform and +i for the inverse.
+ *
+ * @param twiddles Table of exp(-2*pi*i*k/N), k in [0, N); N must be a power of four.
+ * @param inverse  True for the inverse transform (conjugated twiddles).
+ * @param data     N elements, transformed in place, before scaling.
+ */
+template<typename T>
+void radix4_in_place(const std::vector<std::complex<double>>& twiddles, bool inverse,
+                     std::complex<T>* data) {
+    const std::size_t n = twiddles.size();
+    digit_reverse_base4(data, n);
+
+    // Multiplication by -i (forward) or +i (inverse) is a swap and sign change,
+    // so it is done without a full complex product.
+    auto rotate = [inverse](std::complex<T> d) {
+        return inverse ? std::complex<T>(-d.imag(), d.real())
+                       : std::complex<T>(d.imag(), -d.real());
+    };
+
+    for (std::size_t len = 4; len <= n; len <<= 2) {
+        const std::size_t q = len >> 2;
+        const std::size_t stride = n / len;
+        for (std::size_t k = 0; k < q; ++k) {
+            // Twiddles depend only on k and the stage, so compute them once per k.
+            // The largest index 3*k*stride is below n, so no modulo is needed.
+            auto tw = [&](std::size_t power) {
+                const std::complex<double> wd = twiddles[power * k * stride];
+                return std::complex<T>(static_cast<T>(wd.real()),
+                                       static_cast<T>(inverse ? -wd.imag() : wd.imag()));
+            };
+            const std::complex<T> w1 = tw(1);
+            const std::complex<T> w2 = tw(2);
+            const std::complex<T> w3 = tw(3);
+
+            for (std::size_t start = 0; start < n; start += len) {
+                const std::complex<T> a0 = data[start + k];
+                const std::complex<T> a1 = data[start + k + q] * w1;
+                const std::complex<T> a2 = data[start + k + 2 * q] * w2;
+                const std::complex<T> a3 = data[start + k + 3 * q] * w3;
+
+                const std::complex<T> t0 = a0 + a2;
+                const std::complex<T> t1 = a0 - a2;
+                const std::complex<T> t2 = a1 + a3;
+                const std::complex<T> t3 = rotate(a1 - a3);
+
+                data[start + k]         = t0 + t2;
+                data[start + k + q]     = t1 + t3;
+                data[start + k + 2 * q] = t0 - t2;
+                data[start + k + 3 * q] = t1 - t3;
+            }
+        }
+    }
+}
+
 } // namespace
 
 template<typename T>
@@ -193,11 +297,18 @@ void FFTPlan<T>::execute(Direction direction,
 
     const bool inverse = direction == Direction::Inverse;
 
-    if (impl_->algorithm == Algorithm::Radix2) {
-        std::copy(in, in + n, out);
-        radix2_in_place(impl_->twiddles, inverse, out);
-    } else {
-        direct_dft(impl_->twiddles, inverse, in, out);
+    switch (impl_->algorithm) {
+        case Algorithm::Radix4:
+            std::copy(in, in + n, out);
+            radix4_in_place(impl_->twiddles, inverse, out);
+            break;
+        case Algorithm::Radix2:
+            std::copy(in, in + n, out);
+            radix2_in_place(impl_->twiddles, inverse, out);
+            break;
+        default:
+            direct_dft(impl_->twiddles, inverse, in, out);
+            break;
     }
 
     const double scale = scale_factor(impl_->normalization, direction, n);

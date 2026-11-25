@@ -113,7 +113,7 @@ static void test_plan_metadata() {
     FFT_TEST_CHECK(pf.precision() == fft::Precision::Float32);
     FFT_TEST_CHECK(pf.normalization() == fft::Normalization::Inverse);
     FFT_TEST_CHECK(pf.shape().element_count() == 256);
-    FFT_TEST_CHECK(pf.algorithm() == fft::Algorithm::Radix2);
+    FFT_TEST_CHECK(pf.algorithm() == fft::Algorithm::Radix4);  // 256 = 4^4
 
     fft::FFTPlan<double> pd(1024, fft::Normalization::Ortho);
     FFT_TEST_CHECK(pd.size() == 1024);
@@ -234,15 +234,18 @@ static void test_simple_api() {
 }
 
 /**
- * @brief Verifies radix-2 selection and accuracy on power-of-two lengths.
+ * @brief Verifies radix-4 and radix-2 selection and accuracy on power-of-two lengths.
  */
-static void test_radix2() {
-    // Power-of-two lengths select Radix2; others fall back to DirectDFT.
+static void test_radix_kernels() {
+    // Powers of four select Radix4, other powers of two Radix2, the rest DirectDFT.
     FFT_TEST_CHECK(fft::FFTPlan<double>(1).algorithm() == fft::Algorithm::Radix2);
-    FFT_TEST_CHECK(fft::FFTPlan<double>(64).algorithm() == fft::Algorithm::Radix2);
+    FFT_TEST_CHECK(fft::FFTPlan<double>(4).algorithm() == fft::Algorithm::Radix4);
+    FFT_TEST_CHECK(fft::FFTPlan<double>(64).algorithm() == fft::Algorithm::Radix4);
+    FFT_TEST_CHECK(fft::FFTPlan<double>(128).algorithm() == fft::Algorithm::Radix2);
     FFT_TEST_CHECK(fft::FFTPlan<double>(30).algorithm() == fft::Algorithm::DirectDFT);
 
-    const std::size_t sizes[] = {4, 64, 128, 256};
+    // Radix4 lengths (4, 16, 64, 256), Radix2 lengths (2, 8, 128, 512).
+    const std::size_t sizes[] = {2, 4, 8, 16, 64, 128, 256, 512};
     for (const std::size_t n : sizes) {
         const auto x = make_input(n, static_cast<std::uint32_t>(n) * 31u + 5u);
         const auto ref_fwd = reference_dft(x, -1);
@@ -422,7 +425,7 @@ static void test_move_semantics() {
     fft::FFTPlan<double> b(std::move(a));
 
     FFT_TEST_CHECK(b.size() == 4);
-    FFT_TEST_CHECK(b.algorithm() == fft::Algorithm::Radix2);
+    FFT_TEST_CHECK(b.algorithm() == fft::Algorithm::Radix4);
 
     FFT_TEST_CHECK(a.size() == 0);
     FFT_TEST_CHECK(a.normalization() == fft::Normalization::None);
@@ -456,7 +459,7 @@ static void test_move_semantics() {
 
 int main() {
     test_simple_api();
-    test_radix2();
+    test_radix_kernels();
     test_plan_metadata();
     test_invalid_sizes();
     test_shape_overflow();
