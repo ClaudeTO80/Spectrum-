@@ -23,11 +23,13 @@ set(FFT_PUBLIC_HEADERS
     include/fft/shape.hpp
     include/fft/workspace.hpp
     include/fft/fft_plan.hpp
+    include/fft/real_plan.hpp
     include/fft/simple.hpp
 )
 
 set(FFT_SOURCES
     src/fft_plan.cpp
+    src/real_plan.cpp
 )
 
 # Enables the project's warning set on a target. Shared with tests and examples.

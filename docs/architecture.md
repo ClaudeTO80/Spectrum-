@@ -14,6 +14,9 @@ dimension, size-validation and memory-layout concepts.
 - **Planner** (`src/fft_plan.cpp`, `FFTPlan` constructor): selects the algorithm
   from the length and precomputes twiddles, permutations, per-stage tables, chirp
   and kernel data for the chosen algorithm.
+- **Real transforms** (`src/real_plan.cpp`, `RealFFTPlan`): packs real input into a
+  complex inner plan of length N/2 (even N) or N (odd N), then applies the
+  Hermitian post-processing or pre-processing pass.
 - **Kernels** (`src/fft_plan.cpp`): direct DFT, radix-2, radix-4, mixed-radix
   (recursive), Bluestein and Rader. Each kernel works on caller-provided buffers.
 - **Workspace**: caller-owned scratch memory, reusable across executions.

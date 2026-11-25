@@ -11,13 +11,14 @@ architecture prepared for 2D and 3D transforms.
 Implemented:
 
 - Complex 1D forward and inverse transforms, `float` and `double`.
+- Real-to-complex and complex-to-real transforms, returning the N/2+1 non-redundant bins.
 - Algorithms selected by length: radix-4, radix-2, mixed-radix, Bluestein, Rader,
   and a direct DFT for small primes (see [Algorithms](#algorithms)).
 - A basic one-call API and an advanced plan-based API.
 - Caller-owned workspaces for allocation-free execution.
 
-Not yet implemented: real-to-complex transforms, SIMD kernels, batch execution and
-parallelism, and 2D/3D transforms. See [docs/roadmap.md](docs/roadmap.md).
+Not yet implemented: SIMD kernels, batch execution and parallelism, and 2D/3D
+transforms. See [docs/roadmap.md](docs/roadmap.md).
 
 ## Usage
 
@@ -73,6 +74,32 @@ Normalization options:
 
 Input and output buffers must not overlap. In-place execution is not supported yet.
 
+### Real transforms
+
+A real sequence has a Hermitian spectrum, so only the `N/2 + 1` bins `X[0] … X[N/2]`
+are returned. The basic API provides this directly:
+
+```cpp
+#include <fft/fft.hpp>
+
+#include <iostream>
+#include <vector>
+
+int main() {
+    std::vector<double> signal(1000, 1.0);
+    auto spectrum = fft::forward_real(signal);      // 501 complex bins
+    auto back = fft::inverse_real(spectrum, 1000);  // equals signal
+    std::cout << spectrum.size() << ' ' << back[0] << '\n';
+}
+```
+
+The advanced API is `fft::RealFFTPlan<T>`, with `execute_forward(const T*, complex<T>*)`
+and `execute_inverse(const complex<T>*, T*)`, and the same workspace overloads as
+`FFTPlan`. For even N it packs the input into an N/2-point complex transform, which
+costs about half of a complex transform of length N. For odd N it runs a full-length
+complex transform. The imaginary parts of the DC and Nyquist bins are ignored by
+the inverse.
+
 ### Workspace
 
 `plan.workspace_size()` reports the scratch elements that `execute()` needs:
@@ -80,6 +107,8 @@ Input and output buffers must not overlap. In-place execution is not supported y
 - `0` for radix-2, radix-4, and the direct DFT;
 - `size()` for mixed-radix;
 - twice the convolution length for Bluestein and Rader.
+
+`RealFFTPlan::workspace_size()` is twice the inner length plus the inner plan's scratch.
 
 Pass a `fft::Workspace` to reuse its memory across calls, and across plans, as long
 as no two calls use it at the same time. The three-argument `execute()` creates a
@@ -104,7 +133,8 @@ The planner selects an algorithm from the length alone:
 | composite with a prime factor above 64 | Bluestein |
 | other composites | mixed-radix |
 
-`plan.algorithm()` returns the selected algorithm.
+`plan.algorithm()` returns the selected algorithm. Real transforms of even length use
+the table for N/2; odd lengths use it for N.
 
 ## Requirements
 

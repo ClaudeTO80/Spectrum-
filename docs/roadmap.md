@@ -8,7 +8,8 @@ Status as of 0.1.0.
 4. Bluestein: **done** (chirp-z, power-of-two convolution)
 5. Rader: **done** for primes with p-1 a power of two; composite p-1 is measured
    slower than Bluestein and is not selected
-6. Real-to-complex and complex-to-real FFT: pending
+6. Real-to-complex and complex-to-real FFT: **done** (`RealFFTPlan`, packed
+   N/2-point transform for even N, full-length complex transform for odd N)
 7. SIMD and performance work: pending. Candidates: block layouts for the radix-2
    kernel, faster mixed-radix passes so Rader can cover composite p-1, and
    per-stage tables for the direct DFT

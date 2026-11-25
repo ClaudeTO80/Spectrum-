@@ -698,6 +698,265 @@ static void test_move_semantics() {
     FFT_TEST_CHECK(b.size() == 32);
 }
 
+/**
+ * @brief Real input as a complex sequence with zero imaginary part.
+ */
+static std::vector<std::complex<double>> make_real_input(std::size_t n, std::uint32_t seed) {
+    auto x = make_input(n, seed);
+    for (auto& v : x)
+        v = {v.real(), 0.0};
+    return x;
+}
+
+/**
+ * @brief Checks the R2C transform against the reference DFT for many lengths.
+ *
+ * Covers even lengths (packed path), odd lengths (complex path), and the
+ * smallest lengths 1 and 2.
+ */
+static void test_real_forward_reference() {
+    const std::size_t sizes[] = {1, 2, 3, 4, 5, 6, 8, 9, 16, 17, 64, 100, 1009, 1024};
+    for (std::size_t n : sizes) {
+        const auto x = make_real_input(n, static_cast<std::uint32_t>(n) + 7u);
+        std::vector<double> real_in(n);
+        for (std::size_t i = 0; i < n; ++i)
+            real_in[i] = x[i].real();
+
+        const fft::RealFFTPlan<double> plan(n, fft::Normalization::None);
+        FFT_TEST_CHECK(plan.spectrum_size() == n / 2 + 1);
+        std::vector<std::complex<double>> X(plan.spectrum_size());
+        plan.execute_forward(real_in.data(), X.data());
+
+        const auto ref = reference_dft(x, -1);
+        const double tol = 1e-12 * static_cast<double>(n) + 1e-14;
+        FFT_TEST_CHECK(max_abs_error(X, ref) < tol);
+    }
+}
+
+/**
+ * @brief Single precision R2C against the reference, with a looser bound.
+ */
+static void test_real_forward_float() {
+    const std::size_t n = 1024;
+    const auto x = make_real_input(n, 99u);
+    std::vector<float> real_in(n);
+    for (std::size_t i = 0; i < n; ++i)
+        real_in[i] = static_cast<float>(x[i].real());
+
+    const fft::RealFFTPlan<float> plan(n, fft::Normalization::None);
+    std::vector<std::complex<float>> Xf(plan.spectrum_size());
+    plan.execute_forward(real_in.data(), Xf.data());
+
+    std::vector<std::complex<double>> X(Xf.begin(), Xf.end());
+    FFT_TEST_CHECK(max_abs_error(X, reference_dft(x, -1)) < 1e-3);
+    FFT_TEST_CHECK(plan.precision() == fft::Precision::Float32);
+}
+
+/**
+ * @brief Round trip through the default normalization, for even and odd lengths.
+ */
+static void test_real_round_trip() {
+    const std::size_t sizes[] = {1, 2, 3, 7, 8, 10, 33, 64, 1009, 1024, 4096};
+    for (std::size_t n : sizes) {
+        const auto x = make_real_input(n, static_cast<std::uint32_t>(n) * 3u + 1u);
+        std::vector<double> in(n), back(n);
+        for (std::size_t i = 0; i < n; ++i)
+            in[i] = x[i].real();
+
+        const fft::RealFFTPlan<double> forward_plan(n);
+        const fft::RealFFTPlan<double> inverse_plan(n);
+        std::vector<std::complex<double>> X(forward_plan.spectrum_size());
+        forward_plan.execute_forward(in.data(), X.data());
+        inverse_plan.execute_inverse(X.data(), back.data());
+
+        double worst = 0.0;
+        for (std::size_t i = 0; i < n; ++i)
+            worst = std::max(worst, std::abs(back[i] - in[i]));
+        FFT_TEST_CHECK(worst < 1e-12 * static_cast<double>(n) + 1e-14);
+    }
+}
+
+/**
+ * @brief DC and Nyquist bins of a real transform have zero imaginary part.
+ */
+static void test_real_hermitian_bins() {
+    const std::size_t sizes[] = {2, 8, 10, 1024};
+    for (std::size_t n : sizes) {
+        const auto x = make_real_input(n, 5u + static_cast<std::uint32_t>(n));
+        std::vector<double> in(n);
+        for (std::size_t i = 0; i < n; ++i)
+            in[i] = x[i].real();
+        const fft::RealFFTPlan<double> plan(n, fft::Normalization::None);
+        std::vector<std::complex<double>> X(plan.spectrum_size());
+        plan.execute_forward(in.data(), X.data());
+        FFT_TEST_CHECK(std::abs(X[0].imag()) < 1e-12);
+        FFT_TEST_CHECK(std::abs(X[n / 2].imag()) < 1e-12 || n % 2 == 1);
+    }
+}
+
+/**
+ * @brief Normalization scaling: None gives N*x on a round trip, and Ortho is unitary.
+ */
+static void test_real_normalization() {
+    const std::size_t n = 12;
+    const auto x = make_real_input(n, 42u);
+    std::vector<double> in(n);
+    for (std::size_t i = 0; i < n; ++i)
+        in[i] = x[i].real();
+
+    // None: forward is unscaled, inverse is unscaled, so the round trip gives N*x.
+    {
+        const fft::RealFFTPlan<double> p(n, fft::Normalization::None);
+        std::vector<std::complex<double>> X(p.spectrum_size());
+        std::vector<double> back(n);
+        p.execute_forward(in.data(), X.data());
+        p.execute_inverse(X.data(), back.data());
+        double worst = 0.0;
+        for (std::size_t i = 0; i < n; ++i)
+            worst = std::max(worst, std::abs(back[i] - static_cast<double>(n) * in[i]));
+        FFT_TEST_CHECK(worst < 1e-10);
+    }
+
+    // Ortho: Parseval, using the Hermitian weights of the half spectrum.
+    {
+        const fft::RealFFTPlan<double> p(n, fft::Normalization::Ortho);
+        std::vector<std::complex<double>> X(p.spectrum_size());
+        p.execute_forward(in.data(), X.data());
+        double time_energy = 0.0;
+        for (double v : in)
+            time_energy += v * v;
+        double freq_energy = std::norm(X[0]) + std::norm(X[n / 2]);
+        for (std::size_t k = 1; k < n / 2; ++k)
+            freq_energy += 2.0 * std::norm(X[k]);
+        FFT_TEST_CHECK(std::abs(freq_energy - time_energy) < 1e-10 * time_energy);
+    }
+}
+
+/**
+ * @brief Allocating, Workspace and raw-scratch overloads produce identical results.
+ */
+static void test_real_workspace_paths() {
+    const std::size_t sizes[] = {8, 9, 1009};
+    for (std::size_t n : sizes) {
+        const auto x = make_real_input(n, 17u);
+        std::vector<double> in(n);
+        for (std::size_t i = 0; i < n; ++i)
+            in[i] = x[i].real();
+        const fft::RealFFTPlan<double> plan(n);
+        const std::size_t m = plan.spectrum_size();
+
+        std::vector<std::complex<double>> a(m), b(m), c(m);
+        plan.execute_forward(in.data(), a.data());
+
+        fft::Workspace<double> ws;
+        plan.execute_forward(in.data(), b.data(), ws);
+        FFT_TEST_CHECK(ws.capacity() >= plan.workspace_size());
+
+        std::vector<std::complex<double>> raw(plan.workspace_size());
+        plan.execute_forward(in.data(), c.data(), raw.data(), raw.size());
+        FFT_TEST_CHECK(a == b);
+        FFT_TEST_CHECK(a == c);
+
+        std::vector<double> ra(n), rb(n);
+        plan.execute_inverse(a.data(), ra.data());
+        plan.execute_inverse(a.data(), rb.data(), ws);
+        FFT_TEST_CHECK(ra == rb);
+    }
+}
+
+/**
+ * @brief Throws if @p f does not throw an exception of type E.
+ */
+template<typename E, typename F>
+static bool throws_exception(F f) {
+    try {
+        f();
+    } catch (const E&) {
+        return true;
+    } catch (...) {
+        return false;
+    }
+    return false;
+}
+
+/**
+ * @brief Validation of sizes, buffers, scratch and the moved-from state.
+ */
+static void test_real_validation() {
+    FFT_TEST_CHECK((throws_exception<fft::InvalidSizeException>(
+        [] { fft::RealFFTPlan<double> p(0); })));
+    FFT_TEST_CHECK((throws_exception<fft::InvalidSizeException>(
+        [] { (void)fft::forward_real(std::vector<double>{}); })));
+    FFT_TEST_CHECK((throws_exception<fft::InvalidSizeException>(
+        [] { (void)fft::inverse_real(std::vector<std::complex<double>>(3), 8); })));
+
+    const std::size_t n = 16;
+    const fft::RealFFTPlan<double> p(n);
+    std::vector<double> in(n, 1.0);
+    std::vector<std::complex<double>> out(p.spectrum_size());
+
+    FFT_TEST_CHECK((throws_exception<fft::InvalidBufferException>(
+        [&] { p.execute_forward(nullptr, out.data()); })));
+    FFT_TEST_CHECK((throws_exception<fft::InvalidBufferException>(
+        [&] { p.execute_forward(in.data(), nullptr); })));
+    FFT_TEST_CHECK((throws_exception<fft::InvalidBufferException>(
+        [&] { p.execute_inverse(nullptr, in.data()); })));
+
+    // Input and output that share storage overlap.
+    std::vector<std::complex<double>> shared(n);
+    FFT_TEST_CHECK((throws_exception<fft::InvalidBufferException>(
+        [&] { p.execute_forward(reinterpret_cast<const double*>(shared.data()), shared.data()); })));
+
+    // Scratch smaller than workspace_size(), null when required, or overlapping the input.
+    std::vector<std::complex<double>> small(p.workspace_size() - 1);
+    FFT_TEST_CHECK((throws_exception<fft::InvalidBufferException>(
+        [&] { p.execute_forward(in.data(), out.data(), small.data(), small.size()); })));
+    FFT_TEST_CHECK((throws_exception<fft::InvalidBufferException>(
+        [&] { p.execute_forward(in.data(), out.data(), nullptr, 0); })));
+    std::vector<std::complex<double>> big(p.workspace_size());
+    FFT_TEST_CHECK((throws_exception<fft::InvalidBufferException>(
+        [&] { p.execute_forward(reinterpret_cast<const double*>(big.data()), out.data(),
+                                big.data(), big.size()); })));
+
+    // Moved-from plans report an empty state and reject execution.
+    fft::RealFFTPlan<double> source(n, fft::Normalization::Ortho);
+    fft::RealFFTPlan<double> target(std::move(source));
+    FFT_TEST_CHECK(target.size() == n);
+    FFT_TEST_CHECK(target.normalization() == fft::Normalization::Ortho);
+    FFT_TEST_CHECK(source.size() == 0);
+    FFT_TEST_CHECK(source.spectrum_size() == 0);
+    FFT_TEST_CHECK(source.normalization() == fft::Normalization::None);
+    FFT_TEST_CHECK(source.workspace_size() == 0);
+    FFT_TEST_CHECK((throws_exception<fft::FFTException>(
+        [&] { source.execute_forward(in.data(), out.data()); })));
+    FFT_TEST_CHECK((throws_exception<fft::FFTException>(
+        [&] { source.execute_inverse(out.data(), in.data()); })));
+}
+
+/**
+ * @brief Simple API: forward_real and inverse_real match the plan and reject bad sizes.
+ */
+static void test_real_simple_api() {
+    const std::size_t n = 10;
+    const auto x = make_real_input(n, 3u);
+    std::vector<double> in(n);
+    for (std::size_t i = 0; i < n; ++i)
+        in[i] = x[i].real();
+
+    const auto spectrum = fft::forward_real(in);
+    FFT_TEST_CHECK(spectrum.size() == n / 2 + 1);
+    const auto back = fft::inverse_real(spectrum, n);
+    FFT_TEST_CHECK(back.size() == n);
+    double worst = 0.0;
+    for (std::size_t i = 0; i < n; ++i)
+        worst = std::max(worst, std::abs(back[i] - in[i]));
+    FFT_TEST_CHECK(worst < 1e-12);
+
+    // The span overloads agree with the vector overloads.
+    const auto via_span = fft::forward_real(std::span<const double>(in));
+    FFT_TEST_CHECK(via_span == spectrum);
+}
+
 int main() {
     test_simple_api();
     test_radix_kernels();
@@ -717,6 +976,14 @@ int main() {
     test_ortho_parseval();
     test_buffer_validation();
     test_move_semantics();
+    test_real_forward_reference();
+    test_real_forward_float();
+    test_real_round_trip();
+    test_real_hermitian_bins();
+    test_real_normalization();
+    test_real_workspace_paths();
+    test_real_validation();
+    test_real_simple_api();
 
     if (g_failures != 0) {
         std::cerr << g_failures << " check(s) failed\n";
