@@ -28,6 +28,15 @@ set(FFT_SOURCES
     src/fft_plan.cpp
 )
 
+# Enables the project's warning set on a target. Shared with tests and examples.
+function(fft_enable_warnings target)
+    if(MSVC)
+        target_compile_options(${target} PRIVATE /W4 /permissive-)
+    else()
+        target_compile_options(${target} PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+endfunction()
+
 function(fft_configure_target target)
     target_compile_features(${target} PUBLIC cxx_std_20)
     target_include_directories(${target}
@@ -41,19 +50,14 @@ function(fft_configure_target target)
         SOVERSION ${PROJECT_VERSION_MAJOR}
         EXPORT_NAME ${target}
     )
-    if(MSVC)
-        target_compile_options(${target} PRIVATE /W4 /permissive-)
-    else()
-        target_compile_options(${target} PRIVATE -Wall -Wextra -Wpedantic)
-    endif()
+    fft_enable_warnings(${target})
 endfunction()
 
 if(FFT_BUILD_SHARED)
     add_library(FFTShared SHARED ${FFT_SOURCES} ${FFT_PUBLIC_HEADERS})
     target_compile_definitions(FFTShared PRIVATE FFT_BUILDING_LIBRARY)
-    target_compile_definitions(FFTShared INTERFACE FFT_USING_SHARED)
     fft_configure_target(FFTShared)
-    add_library(FFT::Shared ALIAS FFTShared)
+    add_library(FFT::FFTShared ALIAS FFTShared)
     install(TARGETS FFTShared EXPORT FFTTargets
         RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
         LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
@@ -65,7 +69,7 @@ if(FFT_BUILD_STATIC)
     add_library(FFTStatic STATIC ${FFT_SOURCES} ${FFT_PUBLIC_HEADERS})
     target_compile_definitions(FFTStatic PUBLIC FFT_STATIC)
     fft_configure_target(FFTStatic)
-    add_library(FFT::Static ALIAS FFTStatic)
+    add_library(FFT::FFTStatic ALIAS FFTStatic)
     install(TARGETS FFTStatic EXPORT FFTTargets
         ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
         LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
@@ -94,10 +98,18 @@ configure_package_config_file(
     ${CMAKE_CURRENT_BINARY_DIR}/FFTConfig.cmake
     INSTALL_DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/FFT
 )
+
+# Pre-1.0 (0.x) versions carry no compatibility guarantee across minor
+# releases, so only the minor version is matched while the major is 0.
+if(PROJECT_VERSION_MAJOR EQUAL 0)
+    set(FFT_COMPATIBILITY SameMinorVersion)
+else()
+    set(FFT_COMPATIBILITY SameMajorVersion)
+endif()
 write_basic_package_version_file(
     ${CMAKE_CURRENT_BINARY_DIR}/FFTConfigVersion.cmake
     VERSION ${PROJECT_VERSION}
-    COMPATIBILITY SameMajorVersion
+    COMPATIBILITY ${FFT_COMPATIBILITY}
 )
 install(FILES
     ${CMAKE_CURRENT_BINARY_DIR}/FFTConfig.cmake
