@@ -1,0 +1,6 @@
+add_executable(fft_core_example core_example.cpp)
+if(FFT_BUILD_STATIC)
+    target_link_libraries(fft_core_example PRIVATE FFTStatic)
+else()
+    target_link_libraries(fft_core_example PRIVATE FFTShared)
+endif()

@@ -1,0 +1,10 @@
+/build/
+/cmake-build-*/
+/out/
+/install/
+*.user
+*.suo
+*.vcxproj*
+*.sln
+.vscode/
+.idea/
