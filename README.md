@@ -10,7 +10,7 @@ to accommodate future 2D and 3D transforms.
 
 The current code provides the initial compiled-library layout, public types,
 dimension descriptors, workspace storage, plan metadata, CMake installation and
-a basic test/CI setup. FFT execution algorithms are not implemented yet.
+a basic test/CI setup. The direct DFT (complex, float and double) is implemented; other algorithms are not yet.
 
 ## Requirements
 

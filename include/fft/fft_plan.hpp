@@ -1,5 +1,6 @@
 #pragma once
 
+#include <complex>
 #include <cstddef>
 #include <memory>
 #include <type_traits>
@@ -11,14 +12,24 @@
 namespace fft {
 
 /**
- * @brief Immutable 1D FFT plan metadata for a given precision.
+ * @brief Immutable 1D complex FFT plan for a given precision.
+ *
+ * The plan selects an algorithm at construction time and can then execute
+ * transforms of its length any number of times. Execution does not modify
+ * the plan, so a single plan may be shared by concurrent callers.
+ *
+ * Sign convention: Forward uses exp(-2*pi*i*k*n/N), Inverse uses
+ * exp(+2*pi*i*k*n/N). Scaling per Normalization:
+ *  - None:    no scaling in either direction;
+ *  - Forward: 1/N on Forward only;
+ *  - Inverse: 1/N on Inverse only (default);
+ *  - Ortho:   1/sqrt(N) in both directions (unitary transform).
  *
  * @tparam T Floating-point precision, either @c float or @c double.
  *
- * @note A plan moved from is left in an empty state: size() and
- *       normalization() return zero/None, algorithm() returns Unselected,
- *       and shape() throws FFTException. Such a plan may be destroyed or
- *       assigned to, but its metadata must not be relied upon.
+ * @note A plan moved from is left in an empty state: size() returns 0,
+ *       normalization() returns None, algorithm() returns Unselected,
+ *       shape() and execute() throw FFTException.
  */
 template<typename T>
 class FFT_API FFTPlan {
@@ -29,7 +40,7 @@ public:
     /**
      * @brief Constructs a plan for a transform of the given length.
      * @param size          Transform length; must be greater than zero.
-     * @param normalization Scaling convention applied by the transform.
+     * @param normalization Scaling convention applied by execute().
      * @throws InvalidSizeException if @p size is zero.
      */
     explicit FFTPlan(std::size_t size,
@@ -58,8 +69,23 @@ public:
     /** @brief Floating-point precision of the plan type @c T. */
     [[nodiscard]] Precision precision() const noexcept;
 
-    /** @brief Selected algorithm; currently always Algorithm::Unselected. */
+    /** @brief Algorithm chosen at construction; Unselected if moved from. */
     [[nodiscard]] Algorithm algorithm() const noexcept;
+
+    /**
+     * @brief Executes the transform on @c size() complex elements.
+     *
+     * @param direction Forward or Inverse.
+     * @param in        Input buffer of size() elements. Must not be null.
+     * @param out       Output buffer of size() elements. Must not be null and
+     *                  must not overlap @p in; in-place execution is not
+     *                  supported by the direct DFT.
+     * @throws InvalidBufferException if a pointer is null or the buffers overlap.
+     * @throws FFTException if the plan was moved from.
+     */
+    void execute(Direction direction,
+                 const std::complex<T>* in,
+                 std::complex<T>* out) const;
 
 private:
     struct Impl;

@@ -1,9 +1,15 @@
 #include <fft/fft.hpp>
 
+#include <algorithm>
+#include <cmath>
+#include <complex>
 #include <cstddef>
+#include <cstdint>
 #include <iostream>
 #include <limits>
+#include <numbers>
 #include <utility>
+#include <vector>
 
 namespace {
 
@@ -21,15 +27,84 @@ void report_failure(const char* expression, const char* file, int line) {
     ++g_failures;
 }
 
+/**
+ * @brief Deterministic pseudo-random values in [-1, 1) for reproducible tests.
+ */
+std::vector<std::complex<double>> make_input(std::size_t n, std::uint32_t seed) {
+    std::vector<std::complex<double>> x(n);
+    std::uint32_t state = seed;
+    auto next = [&state]() {
+        state = state * 1664525u + 1013904223u;
+        return static_cast<double>(state) / 2147483648.0 - 1.0;
+    };
+    for (auto& v : x)
+        v = {next(), next()};
+    return x;
+}
+
+/**
+ * @brief Naive DFT in long double, used as an independent reference.
+ * @param sign -1 for the forward transform, +1 for the inverse.
+ */
+std::vector<std::complex<long double>> reference_dft(
+        const std::vector<std::complex<double>>& x, int sign) {
+    const std::size_t n = x.size();
+    std::vector<std::complex<long double>> X(n);
+    const long double pi = std::numbers::pi_v<long double>;
+    for (std::size_t k = 0; k < n; ++k) {
+        std::complex<long double> acc{0.0L, 0.0L};
+        for (std::size_t j = 0; j < n; ++j) {
+            const long double angle =
+                sign * 2.0L * pi *
+                static_cast<long double>((k * j) % n) / static_cast<long double>(n);
+            acc += std::complex<long double>(x[j].real(), x[j].imag()) *
+                   std::complex<long double>(std::cos(angle), std::sin(angle));
+        }
+        X[k] = acc;
+    }
+    return X;
+}
+
+/**
+ * @brief Runs a plan of type T on double-precision input, converting in and out.
+ */
+template<typename T>
+std::vector<std::complex<double>> run_plan(const fft::FFTPlan<T>& plan,
+                                           fft::Direction direction,
+                                           const std::vector<std::complex<double>>& x) {
+    std::vector<std::complex<T>> in(x.size());
+    for (std::size_t i = 0; i < x.size(); ++i)
+        in[i] = std::complex<T>(static_cast<T>(x[i].real()), static_cast<T>(x[i].imag()));
+    std::vector<std::complex<T>> out(x.size());
+    plan.execute(direction, in.data(), out.data());
+
+    std::vector<std::complex<double>> result(x.size());
+    for (std::size_t i = 0; i < x.size(); ++i)
+        result[i] = std::complex<double>(out[i]);
+    return result;
+}
+
+/**
+ * @brief Largest absolute difference between @p a and a long double reference.
+ */
+double max_abs_error(const std::vector<std::complex<double>>& a,
+                     const std::vector<std::complex<long double>>& b) {
+    double worst = 0.0;
+    for (std::size_t i = 0; i < a.size(); ++i)
+        worst = std::max(worst, static_cast<double>(std::abs(
+            std::complex<long double>(a[i].real(), a[i].imag()) - b[i])));
+    return worst;
+}
+
 } // namespace
 
-#define FFT_TEST_CHECK(cond)                                  \
-    do {                                                      \
+#define FFT_TEST_CHECK(cond)                                    \
+    do {                                                        \
         if (!(cond)) report_failure(#cond, __FILE__, __LINE__); \
     } while (false)
 
 /**
- * @brief Verifies a basic plan: size, precision, normalization and shape.
+ * @brief Verifies a basic plan: size, precision, normalization and algorithm.
  */
 static void test_plan_metadata() {
     fft::FFTPlan<float> pf(256);
@@ -37,7 +112,7 @@ static void test_plan_metadata() {
     FFT_TEST_CHECK(pf.precision() == fft::Precision::Float32);
     FFT_TEST_CHECK(pf.normalization() == fft::Normalization::Inverse);
     FFT_TEST_CHECK(pf.shape().element_count() == 256);
-    FFT_TEST_CHECK(pf.algorithm() == fft::Algorithm::Unselected);
+    FFT_TEST_CHECK(pf.algorithm() == fft::Algorithm::DirectDFT);
 
     fft::FFTPlan<double> pd(1024, fft::Normalization::Ortho);
     FFT_TEST_CHECK(pd.size() == 1024);
@@ -105,22 +180,168 @@ static void test_workspace() {
 }
 
 /**
- * @brief Verifies move construction and assignment, including the
- *        moved-from state documented in fft_plan.hpp.
+ * @brief Verifies that impulses and constants give the known spectra.
+ */
+static void test_known_spectra() {
+    // Unit impulse at n = 0 has a flat spectrum of ones.
+    for (const std::size_t n : {1u, 2u, 5u, 8u}) {
+        fft::FFTPlan<double> plan(n, fft::Normalization::None);
+        std::vector<std::complex<double>> x(n, {0.0, 0.0});
+        x[0] = {1.0, 0.0};
+        const auto X = run_plan(plan, fft::Direction::Forward, x);
+        for (const auto& v : X)
+            FFT_TEST_CHECK(std::abs(v - std::complex<double>(1.0, 0.0)) < 1e-12);
+    }
+
+    // Constant input has all energy in bin 0.
+    const std::size_t n = 8;
+    fft::FFTPlan<double> plan(n, fft::Normalization::None);
+    std::vector<std::complex<double>> ones(n, {1.0, 0.0});
+    const auto X = run_plan(plan, fft::Direction::Forward, ones);
+    FFT_TEST_CHECK(std::abs(X[0] - std::complex<double>(8.0, 0.0)) < 1e-12);
+    for (std::size_t k = 1; k < n; ++k)
+        FFT_TEST_CHECK(std::abs(X[k]) < 1e-12);
+}
+
+/**
+ * @brief Compares forward and inverse execution against a long double reference.
+ */
+static void test_against_reference() {
+    const std::size_t sizes[] = {1, 2, 3, 5, 7, 8, 16, 30};
+    for (const std::size_t n : sizes) {
+        const auto x = make_input(n, static_cast<std::uint32_t>(n) * 7919u + 1u);
+
+        const double tol_d = 1e-12 * static_cast<double>(n);
+        const double tol_f = 1e-4 * static_cast<double>(n);
+
+        fft::FFTPlan<double> pd(n, fft::Normalization::None);
+        fft::FFTPlan<float> pf(n, fft::Normalization::None);
+
+        const auto ref_fwd = reference_dft(x, -1);
+        const auto ref_inv = reference_dft(x, +1);
+
+        FFT_TEST_CHECK(max_abs_error(run_plan(pd, fft::Direction::Forward, x), ref_fwd) < tol_d);
+        FFT_TEST_CHECK(max_abs_error(run_plan(pd, fft::Direction::Inverse, x), ref_inv) < tol_d);
+        FFT_TEST_CHECK(max_abs_error(run_plan(pf, fft::Direction::Forward, x), ref_fwd) < tol_f);
+        FFT_TEST_CHECK(max_abs_error(run_plan(pf, fft::Direction::Inverse, x), ref_inv) < tol_f);
+    }
+}
+
+/**
+ * @brief Verifies that the default Inverse normalization round-trips the input.
+ */
+static void test_round_trip() {
+    const std::size_t sizes[] = {1, 3, 8, 30};
+    for (const std::size_t n : sizes) {
+        const auto x = make_input(n, 42u + static_cast<std::uint32_t>(n));
+
+        fft::FFTPlan<double> pd(n);  // default: Normalization::Inverse
+        const auto y = run_plan(pd, fft::Direction::Inverse,
+                                run_plan(pd, fft::Direction::Forward, x));
+        for (std::size_t i = 0; i < n; ++i)
+            FFT_TEST_CHECK(std::abs(y[i] - x[i]) < 1e-12);
+
+        fft::FFTPlan<float> pf(n);
+        const auto z = run_plan(pf, fft::Direction::Inverse,
+                                run_plan(pf, fft::Direction::Forward, x));
+        for (std::size_t i = 0; i < n; ++i)
+            FFT_TEST_CHECK(std::abs(z[i] - x[i]) < 1e-4);
+    }
+}
+
+/**
+ * @brief Verifies the scale factors of Forward and Ortho normalization.
+ */
+static void test_normalization_scaling() {
+    const std::size_t n = 6;
+    const auto x = make_input(n, 7u);
+    const double dn = static_cast<double>(n);
+
+    fft::FFTPlan<double> none(n, fft::Normalization::None);
+    fft::FFTPlan<double> fwd(n, fft::Normalization::Forward);
+    fft::FFTPlan<double> ortho(n, fft::Normalization::Ortho);
+
+    const auto raw = run_plan(none, fft::Direction::Forward, x);
+    const auto scaled_fwd = run_plan(fwd, fft::Direction::Forward, x);
+    const auto scaled_ortho = run_plan(ortho, fft::Direction::Forward, x);
+    const auto raw_inv = run_plan(none, fft::Direction::Inverse, x);
+    const auto fwd_inv = run_plan(fwd, fft::Direction::Inverse, x);
+
+    for (std::size_t k = 0; k < n; ++k) {
+        FFT_TEST_CHECK(std::abs(scaled_fwd[k] - raw[k] / dn) < 1e-12);
+        FFT_TEST_CHECK(std::abs(scaled_ortho[k] - raw[k] / std::sqrt(dn)) < 1e-12);
+        // Forward normalization leaves the inverse direction unscaled.
+        FFT_TEST_CHECK(std::abs(fwd_inv[k] - raw_inv[k]) < 1e-12);
+    }
+}
+
+/**
+ * @brief Verifies that Ortho normalization preserves energy (Parseval).
+ */
+static void test_ortho_parseval() {
+    const std::size_t n = 30;
+    const auto x = make_input(n, 99u);
+    fft::FFTPlan<double> plan(n, fft::Normalization::Ortho);
+    const auto X = run_plan(plan, fft::Direction::Forward, x);
+
+    double ex = 0.0, eX = 0.0;
+    for (std::size_t i = 0; i < n; ++i) {
+        ex += std::norm(x[i]);
+        eX += std::norm(X[i]);
+    }
+    FFT_TEST_CHECK(std::abs(ex - eX) < 1e-10);
+}
+
+/**
+ * @brief Verifies buffer validation: null pointers and overlapping ranges.
+ */
+static void test_buffer_validation() {
+    fft::FFTPlan<double> plan(4);
+    std::complex<double> buf[4] = {};
+
+    auto expect_invalid_buffer = [&](const std::complex<double>* in,
+                                     std::complex<double>* out) {
+        bool caught = false;
+        try {
+            plan.execute(fft::Direction::Forward, in, out);
+        } catch (const fft::InvalidBufferException&) {
+            caught = true;
+        }
+        return caught;
+    };
+
+    FFT_TEST_CHECK(expect_invalid_buffer(nullptr, buf));
+    FFT_TEST_CHECK(expect_invalid_buffer(buf, nullptr));
+    FFT_TEST_CHECK(expect_invalid_buffer(buf, buf));          // in-place
+    FFT_TEST_CHECK(expect_invalid_buffer(buf, buf + 2));      // partial overlap
+}
+
+/**
+ * @brief Verifies that a moved-from plan refuses to execute and reports
+ *        Unselected, while a moved-to plan keeps working.
  */
 static void test_move_semantics() {
-    fft::FFTPlan<double> a(64, fft::Normalization::None);
+    fft::FFTPlan<double> a(4, fft::Normalization::None);
     fft::FFTPlan<double> b(std::move(a));
 
-    FFT_TEST_CHECK(b.size() == 64);
-    FFT_TEST_CHECK(b.normalization() == fft::Normalization::None);
+    FFT_TEST_CHECK(b.size() == 4);
+    FFT_TEST_CHECK(b.algorithm() == fft::Algorithm::DirectDFT);
 
-    // Moved-from state: metadata accessors must not dereference null.
     FFT_TEST_CHECK(a.size() == 0);
     FFT_TEST_CHECK(a.normalization() == fft::Normalization::None);
+    FFT_TEST_CHECK(a.algorithm() == fft::Algorithm::Unselected);
     FFT_TEST_CHECK(a.precision() == fft::Precision::Float64);
 
+    std::complex<double> in[4] = {}, out[4] = {};
     bool caught = false;
+    try {
+        a.execute(fft::Direction::Forward, in, out);
+    } catch (const fft::FFTException&) {
+        caught = true;
+    }
+    FFT_TEST_CHECK(caught);
+
+    caught = false;
     try {
         (void)a.shape();
     } catch (const fft::FFTException&) {
@@ -142,6 +363,12 @@ int main() {
     test_shape_overflow();
     test_shape_metadata();
     test_workspace();
+    test_known_spectra();
+    test_against_reference();
+    test_round_trip();
+    test_normalization_scaling();
+    test_ortho_parseval();
+    test_buffer_validation();
     test_move_semantics();
 
     if (g_failures != 0) {
