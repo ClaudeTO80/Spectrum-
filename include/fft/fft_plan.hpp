@@ -15,8 +15,9 @@ namespace fft {
  * @brief Immutable 1D complex FFT plan for a given precision.
  *
  * The plan selects an algorithm at construction time: Radix4 (iterative
- * Cooley-Tukey) for powers of four, Radix2 for other powers of two, and
- * DirectDFT otherwise.
+ * Cooley-Tukey) for powers of four, Radix2 for other powers of two, MixedRadix
+ * (recursive Cooley-Tukey over the prime factors) for other composite lengths,
+ * and DirectDFT for primes.
  * It can then execute transforms of its length any number of times. Execution does not modify
  * the plan, so a single plan may be shared by concurrent callers.
  *
@@ -83,6 +84,8 @@ public:
      *                  must not overlap @p in.
      * @throws InvalidBufferException if a pointer is null or the buffers overlap.
      * @throws FFTException if the plan was moved from.
+     *
+     * @note MixedRadix execution allocates a scratch buffer of size() elements.
      */
     void execute(Direction direction,
                  const std::complex<T>* in,

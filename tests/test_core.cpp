@@ -242,7 +242,8 @@ static void test_radix_kernels() {
     FFT_TEST_CHECK(fft::FFTPlan<double>(4).algorithm() == fft::Algorithm::Radix4);
     FFT_TEST_CHECK(fft::FFTPlan<double>(64).algorithm() == fft::Algorithm::Radix4);
     FFT_TEST_CHECK(fft::FFTPlan<double>(128).algorithm() == fft::Algorithm::Radix2);
-    FFT_TEST_CHECK(fft::FFTPlan<double>(30).algorithm() == fft::Algorithm::DirectDFT);
+    FFT_TEST_CHECK(fft::FFTPlan<double>(30).algorithm() == fft::Algorithm::MixedRadix);
+    FFT_TEST_CHECK(fft::FFTPlan<double>(7).algorithm() == fft::Algorithm::DirectDFT);
 
     // Radix4 lengths (4, 16, 64, 256), Radix2 lengths (2, 8, 128, 512).
     const std::size_t sizes[] = {2, 4, 8, 16, 64, 128, 256, 512};
@@ -277,6 +278,56 @@ static void test_radix_kernels() {
                             run_plan(plan, fft::Direction::Forward, x));
     for (std::size_t i = 0; i < big; ++i)
         FFT_TEST_CHECK(std::abs(y[i] - x[i]) < 1e-12);
+}
+
+/**
+ * @brief Verifies the mixed-radix path against the reference DFT and its invariants.
+ */
+static void test_mixed_radix() {
+    const std::size_t sizes[] = {3, 5, 6, 9, 12, 15, 20, 30, 45, 49, 60, 100, 210, 360};
+    for (const std::size_t n : sizes) {
+        // 3 and 5 are prime and use the direct DFT; the rest are composite.
+        const bool prime = (n == 3 || n == 5);
+        FFT_TEST_CHECK(fft::FFTPlan<double>(n).algorithm() ==
+                       (prime ? fft::Algorithm::DirectDFT : fft::Algorithm::MixedRadix));
+
+        const auto x = make_input(n, static_cast<std::uint32_t>(n) * 131u + 17u);
+        const auto ref_fwd = reference_dft(x, -1);
+        const auto ref_inv = reference_dft(x, +1);
+
+        fft::FFTPlan<double> pd(n, fft::Normalization::None);
+        fft::FFTPlan<float> pf(n, fft::Normalization::None);
+
+        FFT_TEST_CHECK(max_abs_error(run_plan(pd, fft::Direction::Forward, x), ref_fwd) < 1e-11 * static_cast<double>(n));
+        FFT_TEST_CHECK(max_abs_error(run_plan(pd, fft::Direction::Inverse, x), ref_inv) < 1e-11 * static_cast<double>(n));
+        FFT_TEST_CHECK(max_abs_error(run_plan(pf, fft::Direction::Forward, x), ref_fwd) < 1e-4 * static_cast<double>(n));
+        FFT_TEST_CHECK(max_abs_error(run_plan(pf, fft::Direction::Inverse, x), ref_inv) < 1e-4 * static_cast<double>(n));
+
+        fft::FFTPlan<double> plan(n);
+        const auto y = run_plan(plan, fft::Direction::Inverse,
+                                run_plan(plan, fft::Direction::Forward, x));
+        for (std::size_t i = 0; i < n; ++i)
+            FFT_TEST_CHECK(std::abs(y[i] - x[i]) < 1e-12);
+    }
+
+    // Unit impulse gives a flat spectrum for a composite length.
+    fft::FFTPlan<double> six(6, fft::Normalization::None);
+    std::vector<std::complex<double>> imp(6, {0.0, 0.0});
+    imp[0] = {1.0, 0.0};
+    for (const auto& v : run_plan(six, fft::Direction::Forward, imp))
+        FFT_TEST_CHECK(std::abs(v - std::complex<double>(1.0, 0.0)) < 1e-12);
+
+    // Ortho normalization preserves energy for a composite length.
+    const std::size_t n = 360;
+    const auto x = make_input(n, 360u);
+    fft::FFTPlan<double> ortho(n, fft::Normalization::Ortho);
+    const auto X = run_plan(ortho, fft::Direction::Forward, x);
+    double ex = 0.0, eX = 0.0;
+    for (std::size_t i = 0; i < n; ++i) {
+        ex += std::norm(x[i]);
+        eX += std::norm(X[i]);
+    }
+    FFT_TEST_CHECK(std::abs(ex - eX) < 1e-9);
 }
 
 /**
@@ -460,6 +511,7 @@ static void test_move_semantics() {
 int main() {
     test_simple_api();
     test_radix_kernels();
+    test_mixed_radix();
     test_plan_metadata();
     test_invalid_sizes();
     test_shape_overflow();

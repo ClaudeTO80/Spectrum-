@@ -28,16 +28,41 @@ bool is_power_of_four(std::size_t n) {
 }
 
 /**
+ * @brief Returns the prime factors of @p n in non-decreasing order, with multiplicity.
+ * @param n Transform length, greater than zero.
+ */
+std::vector<std::size_t> prime_factors(std::size_t n) {
+    std::vector<std::size_t> factors;
+    for (std::size_t p = 2; p * p <= n; ++p) {
+        while (n % p == 0) {
+            factors.push_back(p);
+            n /= p;
+        }
+    }
+    if (n > 1)
+        factors.push_back(n);
+    return factors;
+}
+
+/**
+ * @brief Returns true if @p n is prime.
+ */
+bool is_prime(std::size_t n) {
+    return n >= 2 && prime_factors(n).size() == 1;
+}
+
+/**
  * @brief Selects the algorithm for a transform length.
  *
- * Radix4 for powers of four, Radix2 for other powers of two, DirectDFT otherwise.
+ * Radix4 for powers of four, Radix2 for other powers of two, DirectDFT for
+ * primes, MixedRadix for other composite lengths.
  */
 Algorithm select_algorithm(std::size_t n) {
     if (is_power_of_four(n))
         return Algorithm::Radix4;
     if (std::has_single_bit(n))
         return Algorithm::Radix2;
-    return Algorithm::DirectDFT;
+    return is_prime(n) ? Algorithm::DirectDFT : Algorithm::MixedRadix;
 }
 
 /**
@@ -134,6 +159,69 @@ void direct_dft(const std::vector<std::complex<double>>& twiddles, bool inverse,
             acc += std::complex<double>(in[j]) * (inverse ? std::conj(w) : w);
         }
         out[k] = std::complex<T>(static_cast<T>(acc.real()), static_cast<T>(acc.imag()));
+    }
+}
+
+/**
+ * @brief Recursive decimation-in-time mixed-radix transform of length n.
+ *
+ * Splits the length-n transform on the prime factor p = factors[level] into p
+ * subsequences of length m = n/p, transforms each recursively into a
+ * contiguous block of @p out, then combines them with the identity
+ *   X[k + m*q] = sum_r W_n^(r*k) * Y_r[k] * W_p^(r*q).
+ *
+ * @param twiddles  Table of exp(-2*pi*i*j/N), j in [0, N), N the plan length.
+ * @param factors   Prime factors of N, with multiplicity.
+ * @param level     Index in @p factors of the factor to split on.
+ * @param in        Input; sample j is at in[j * in_stride].
+ * @param in_stride Distance between consecutive input samples.
+ * @param n         Length of this sub-transform, the product of factors[level..].
+ * @param out       Output, n contiguous elements.
+ * @param tmp       Scratch, at least n elements; reused by the children, which
+ *                  finish before this level uses it.
+ * @param inverse   True for the inverse transform (conjugated twiddles).
+ */
+template<typename T>
+void mixed_radix_rec(const std::vector<std::complex<double>>& twiddles,
+                     const std::vector<std::size_t>& factors, std::size_t level,
+                     const std::complex<T>* in, std::size_t in_stride, std::size_t n,
+                     std::complex<T>* out, std::complex<T>* tmp, bool inverse) {
+    if (n == 1) {
+        out[0] = in[0];
+        return;
+    }
+
+    const std::size_t N = twiddles.size();
+    const std::size_t p = factors[level];
+    const std::size_t m = n / p;
+
+    // W_N^j for j < N, conjugated for the inverse transform.
+    auto w = [&](std::size_t j) {
+        const std::complex<double> wd = twiddles[j];
+        return std::complex<T>(static_cast<T>(wd.real()),
+                               static_cast<T>(inverse ? -wd.imag() : wd.imag()));
+    };
+
+    // Y_r: transform of the subsequence in[r + p*j], stored in out[r*m, (r+1)*m).
+    for (std::size_t r = 0; r < p; ++r)
+        mixed_radix_rec(twiddles, factors, level + 1, in + r * in_stride, in_stride * p,
+                        m, out + r * m, tmp, inverse);
+
+    // Pass 1: apply the cross-stage twiddles W_n^(r*k) into scratch.
+    const std::size_t step = N / n;
+    for (std::size_t r = 0; r < p; ++r)
+        for (std::size_t k = 0; k < m; ++k)
+            tmp[r * m + k] = cmul(out[r * m + k], w(r * k * step));
+
+    // Pass 2: length-p DFT across r for each k; outputs go to their final places.
+    const std::size_t pstep = N / p;
+    for (std::size_t k = 0; k < m; ++k) {
+        for (std::size_t q = 0; q < p; ++q) {
+            std::complex<T> acc{T(0), T(0)};
+            for (std::size_t r = 0; r < p; ++r)
+                acc += cmul(tmp[r * m + k], w(((r * q) % p) * pstep));
+            out[k + m * q] = acc;
+        }
     }
 }
 
@@ -294,6 +382,7 @@ struct FFTPlan<T>::Impl {
                     }
                 }
                 break;
+            case Algorithm::MixedRadix: factors = prime_factors(length); break;
             default: break;
         }
     }
@@ -304,6 +393,7 @@ struct FFTPlan<T>::Impl {
     std::vector<std::complex<double>> twiddles;
     SwapList swaps;
     std::vector<std::complex<T>> stage_tw;  // Radix2 and Radix4, see the kernels.
+    std::vector<std::size_t> factors;       // MixedRadix only: prime factors of length.
 };
 
 template<typename T>
@@ -373,6 +463,12 @@ void FFTPlan<T>::execute(Direction direction,
             std::copy(in, in + n, out);
             radix2_in_place(impl_->stage_tw, n, impl_->swaps, inverse, out);
             break;
+        case Algorithm::MixedRadix: {
+            std::vector<std::complex<T>> scratch(n);
+            mixed_radix_rec(impl_->twiddles, impl_->factors, 0, in, 1, n, out,
+                            scratch.data(), inverse);
+            break;
+        }
         default:
             direct_dft(impl_->twiddles, inverse, in, out);
             break;
