@@ -120,6 +120,17 @@ ctest --test-dir build -C Release --output-on-failure
 cmake --install build --prefix install
 ```
 
+To build the timing tool used for performance work:
+
+```bash
+cmake -S . -B build -DFFT_BUILD_BENCHMARKS=ON
+cmake --build build --config Release
+./build/fft_bench_plan 4096 200
+```
+
+Timings on shared machines vary by tens of percent between sessions. Compare
+binaries only when they are run in alternation on the same machine.
+
 ## Consume from another CMake project
 
 ```cmake

@@ -8,6 +8,7 @@ option(FFT_BUILD_SHARED "Build shared library" ON)
 option(FFT_BUILD_STATIC "Build static library" ON)
 option(FFT_BUILD_TESTS "Build tests" ON)
 option(FFT_BUILD_EXAMPLES "Build examples" ON)
+option(FFT_BUILD_BENCHMARKS "Build the timing tool in benchmarks/" OFF)
 
 if(NOT FFT_BUILD_SHARED AND NOT FFT_BUILD_STATIC)
     message(FATAL_ERROR "At least one of FFT_BUILD_SHARED or FFT_BUILD_STATIC must be ON")
@@ -85,6 +86,12 @@ endif()
 
 if(FFT_BUILD_EXAMPLES)
     add_subdirectory(examples)
+endif()
+
+if(FFT_BUILD_BENCHMARKS)
+    add_executable(fft_bench_plan benchmarks/bench_plan.cpp)
+    target_link_libraries(fft_bench_plan PRIVATE FFTStatic)
+    fft_enable_warnings(fft_bench_plan)
 endif()
 
 install(DIRECTORY include/ DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
