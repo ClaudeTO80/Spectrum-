@@ -8,6 +8,7 @@
 #include <iostream>
 #include <limits>
 #include <numbers>
+#include <span>
 #include <utility>
 #include <vector>
 
@@ -177,6 +178,59 @@ static void test_workspace() {
     workspace.resize(16);
     FFT_TEST_CHECK(workspace.capacity() == 16);
     FFT_TEST_CHECK(workspace.data() != nullptr);
+}
+
+/**
+ * @brief Verifies the basic API: forward, inverse, vector and span overloads.
+ */
+static void test_simple_api() {
+    // Impulse at 0 transforms to all ones; the vector overload is used here.
+    const std::vector<std::complex<double>> impulse = {{1.0, 0.0}, {0.0, 0.0}, {0.0, 0.0}, {0.0, 0.0}};
+    const auto X = fft::forward(impulse);
+    FFT_TEST_CHECK(X.size() == 4);
+    for (const auto& v : X)
+        FFT_TEST_CHECK(std::abs(v - std::complex<double>(1.0, 0.0)) < 1e-12);
+
+    // Inverse of [N, 0, ...] is all ones under the default normalization.
+    const std::vector<std::complex<double>> dc = {{4.0, 0.0}, {0.0, 0.0}, {0.0, 0.0}, {0.0, 0.0}};
+    const auto x = fft::inverse(dc);
+    for (const auto& v : x)
+        FFT_TEST_CHECK(std::abs(v - std::complex<double>(1.0, 0.0)) < 1e-12);
+
+    // Round trip reproduces the input, in both precisions.
+    const auto sig = make_input(12, 2024u);
+    const auto back = fft::inverse(fft::forward(sig));
+    for (std::size_t i = 0; i < sig.size(); ++i)
+        FFT_TEST_CHECK(std::abs(back[i] - sig[i]) < 1e-12);
+
+    std::vector<std::complex<float>> sigf(sig.size());
+    for (std::size_t i = 0; i < sig.size(); ++i)
+        sigf[i] = {static_cast<float>(sig[i].real()), static_cast<float>(sig[i].imag())};
+    const auto backf = fft::inverse(fft::forward(sigf));
+    for (std::size_t i = 0; i < sigf.size(); ++i)
+        FFT_TEST_CHECK(std::abs(backf[i] - sigf[i]) < 1e-4f);
+
+    // The span overload agrees with the vector overload.
+    const auto via_span = fft::forward(std::span<const std::complex<double>>(sig));
+    const auto via_vec = fft::forward(sig);
+    for (std::size_t i = 0; i < sig.size(); ++i)
+        FFT_TEST_CHECK(via_span[i] == via_vec[i]);
+
+    // Basic API matches the advanced API with default normalization.
+    fft::FFTPlan<double> plan(sig.size());
+    std::vector<std::complex<double>> adv(sig.size());
+    plan.execute(fft::Direction::Forward, sig.data(), adv.data());
+    for (std::size_t i = 0; i < sig.size(); ++i)
+        FFT_TEST_CHECK(std::abs(adv[i] - via_vec[i]) < 1e-12);
+
+    // Empty input is rejected.
+    bool caught = false;
+    try {
+        (void)fft::forward(std::vector<std::complex<double>>{});
+    } catch (const fft::InvalidSizeException&) {
+        caught = true;
+    }
+    FFT_TEST_CHECK(caught);
 }
 
 /**
@@ -358,6 +412,7 @@ static void test_move_semantics() {
 }
 
 int main() {
+    test_simple_api();
     test_plan_metadata();
     test_invalid_sizes();
     test_shape_overflow();

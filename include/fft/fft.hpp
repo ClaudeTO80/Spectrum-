@@ -1,5 +1,9 @@
 #pragma once
 
+// Basic API: fft::forward, fft::inverse.
+#include "simple.hpp"
+
+// Advanced API: explicit plans, normalization, algorithm selection, workspaces.
 #include "exceptions.hpp"
 #include "fft_plan.hpp"
 #include "shape.hpp"

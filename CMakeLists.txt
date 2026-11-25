@@ -22,6 +22,7 @@ set(FFT_PUBLIC_HEADERS
     include/fft/shape.hpp
     include/fft/workspace.hpp
     include/fft/fft_plan.hpp
+    include/fft/simple.hpp
 )
 
 set(FFT_SOURCES
