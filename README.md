@@ -1,16 +1,23 @@
 # FFT
 
-A standalone C++20 Fourier transform library. The project is being developed with
-1D transforms as the initial implementation target and a core architecture intended
-to accommodate future 2D and 3D transforms.
+A standalone C++20 Fourier transform library. The current release implements
+complex one-dimensional transforms in single and double precision, with an
+architecture prepared for 2D and 3D transforms.
 
-## Current status
+## Status
 
-**Early development – Phase 2 (core infrastructure).**
+**Early development (0.1.0).**
 
-The current code provides the initial compiled-library layout, public types,
-dimension descriptors, workspace storage, plan metadata, CMake installation and
-a basic test/CI setup. The direct DFT, radix-2, radix-4, mixed-radix, Bluestein and Rader complex FFTs (float and double) are implemented.
+Implemented:
+
+- Complex 1D forward and inverse transforms, `float` and `double`.
+- Algorithms selected by length: radix-4, radix-2, mixed-radix, Bluestein, Rader,
+  and a direct DFT for small primes (see [Algorithms](#algorithms)).
+- A basic one-call API and an advanced plan-based API.
+- Caller-owned workspaces for allocation-free execution.
+
+Not yet implemented: real-to-complex transforms, SIMD kernels, batch execution and
+parallelism, and 2D/3D transforms. See [docs/roadmap.md](docs/roadmap.md).
 
 ## Usage
 
@@ -19,36 +26,90 @@ a basic test/CI setup. The direct DFT, radix-2, radix-4, mixed-radix, Bluestein 
 ```cpp
 #include <fft/fft.hpp>
 
-std::vector<std::complex<double>> x = /* samples */;
-auto X = fft::forward(x);   // forward transform, unscaled
-auto y = fft::inverse(X);   // inverse transform, divided by N; y ~= x
+#include <complex>
+#include <vector>
+
+int main() {
+    std::vector<std::complex<double>> x = {{1.0, 0.0}, {2.0, 0.0}, {3.0, 0.0}, {4.0, 0.0}};
+    auto X = fft::forward(x);   // forward transform, unscaled
+    auto y = fft::inverse(X);   // inverse transform, divided by N; y == x up to rounding
+}
 ```
 
-Both functions accept a `std::vector` or a `std::span` of `std::complex<float>`
-or `std::complex<double>`. Each call builds a plan internally.
+Both functions accept a `std::vector` or a `std::span` of `std::complex<float>` or
+`std::complex<double>`. Each call builds a plan internally, so use the advanced API
+when the same length is transformed repeatedly.
 
 ### Advanced API
 
-Use an explicit plan when you need a normalization other than the default, want to
-reuse the twiddle table across many transforms, or need to control output buffers:
+Use an explicit plan to choose a normalization, reuse the plan across calls, or
+provide your own scratch memory:
 
 ```cpp
-fft::FFTPlan<float> plan(n, fft::Normalization::Ortho);  // unitary scaling
-plan.execute(fft::Direction::Forward, in.data(), out.data());
+#include <fft/fft.hpp>
+
+#include <complex>
+#include <vector>
+
+int main() {
+    const std::size_t n = 360;
+    fft::FFTPlan<float> plan(n, fft::Normalization::Ortho);   // unitary scaling
+
+    std::vector<std::complex<float>> in(n), out(n);
+    fft::Workspace<float> ws(plan.workspace_size());          // scratch, reusable
+
+    plan.execute(fft::Direction::Forward, in.data(), out.data(), ws);
+}
 ```
 
-Normalization options: `None`, `Forward`, `Inverse` (default), `Ortho`.
-Input and output buffers must not overlap (in-place is not supported yet).
-The planner uses radix-4 for powers of four, radix-2 for other powers of two, Rader for primes p with p-1 a power of two, Bluestein (chirp-z) for other primes above 64 and for composites with a prime factor above 64, mixed-radix for other composite lengths, and a direct DFT for the remaining primes. Mixed-radix and Bluestein execution need scratch memory (`plan.workspace_size()`): pass a
-`fft::Workspace` to reuse it across calls, or let the plan allocate one per call.
-A plan is immutable and can be shared across threads that use their own buffers.
-`fft::Workspace` is provided for caller-owned scratch memory, but no transform
-uses it yet.
+Normalization options:
+
+| Value | Forward | Inverse |
+|-------|---------|---------|
+| `None` | no scaling | no scaling |
+| `Forward` | divide by N | no scaling |
+| `Inverse` (default) | no scaling | divide by N |
+| `Ortho` | divide by √N | divide by √N |
+
+Input and output buffers must not overlap. In-place execution is not supported yet.
+
+### Workspace
+
+`plan.workspace_size()` reports the scratch elements that `execute()` needs:
+
+- `0` for radix-2, radix-4, and the direct DFT;
+- `size()` for mixed-radix;
+- twice the convolution length for Bluestein and Rader.
+
+Pass a `fft::Workspace` to reuse its memory across calls, and across plans, as long
+as no two calls use it at the same time. The three-argument `execute()` creates a
+temporary workspace, so it allocates for the algorithms above.
+
+### Thread safety
+
+A plan is immutable after construction and can be shared between threads. Each
+thread must use its own input and output buffers and its own `Workspace`.
+
+## Algorithms
+
+The planner selects an algorithm from the length alone:
+
+| Length | Algorithm |
+|--------|-----------|
+| power of four (4, 16, 64, …) | radix-4 |
+| other powers of two | radix-2 |
+| prime p ≤ 64 | direct DFT |
+| prime p > 64, with p−1 a power of two, p < 2³² | Rader |
+| other prime p > 64 | Bluestein |
+| composite with a prime factor above 64 | Bluestein |
+| other composites | mixed-radix |
+
+`plan.algorithm()` returns the selected algorithm.
 
 ## Requirements
 
 - CMake 3.25 or newer
-- C++20 compiler
+- A C++20 compiler (GCC, Clang or MSVC)
 
 ## Build
 
@@ -67,6 +128,11 @@ target_link_libraries(my_app PRIVATE FFT::FFTStatic)
 ```
 
 The exported target names are `FFT::FFTStatic` and `FFT::FFTShared`.
+
+## Documentation
+
+- [Architecture](docs/architecture.md)
+- [Roadmap](docs/roadmap.md)
 
 ## License
 

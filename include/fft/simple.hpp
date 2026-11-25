@@ -8,8 +8,11 @@
  * default normalization (forward unscaled, inverse divided by N), so that
  * fft::inverse(fft::forward(x)) reproduces x.
  *
- * Each call recomputes the twiddle table. For repeated transforms of the same
- * length, create an FFTPlan once and reuse it (see fft_plan.hpp).
+ * Each call builds a new plan, so it recomputes the twiddle table. Lengths that
+ * use the mixed-radix, Bluestein or Rader algorithms also allocate scratch
+ * memory on each call. For repeated transforms of the same length, create an
+ * FFTPlan once and reuse it, with a Workspace if allocations matter (see
+ * fft_plan.hpp).
  */
 
 #include <complex>
