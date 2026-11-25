@@ -10,8 +10,14 @@ Status as of 0.1.0.
    slower than Bluestein and is not selected
 6. Real-to-complex and complex-to-real FFT: **done** (`RealFFTPlan`, packed
    N/2-point transform for even N, full-length complex transform for odd N)
-7. SIMD and performance work: pending. Candidates: block layouts for the radix-2
-   kernel, faster mixed-radix passes so Rader can cover composite p-1, and
-   per-stage tables for the direct DFT
+7. SIMD and performance work: **in progress**.
+   - Done: the first radix-2 stages (lengths 2 and 4) and the first radix-4 stage
+     (length 4) no longer multiply by twiddles that equal 1 or ±i. Measured on
+     double precision, shared VM: radix-2 lengths 5–16% faster (N=128: 0.73 to
+     0.61 µs; N=512: 3.74 to 3.31 µs); radix-4 changes are within the ±5% noise.
+   - Pending: SIMD kernels (not started; a portable version needs per-ISA code
+     paths and an MSVC build, so it is a separate decision), block layouts for the
+     radix-2 kernel, faster mixed-radix passes so Rader can cover composite p-1,
+     and per-stage tables for the direct DFT
 8. Batch execution and parallelism: pending
 9. 2D and 3D extensions: pending

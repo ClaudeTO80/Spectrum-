@@ -404,8 +404,38 @@ void radix2_in_place(const std::vector<std::complex<T>>& stage_tw, std::size_t n
     // Conjugation for the inverse transform, folded into a sign on the imaginary part.
     const T sign = inverse ? T(-1) : T(1);
 
-    std::size_t offset = 0;
-    for (std::size_t len = 2; len <= n; len <<= 1) {
+    // Length 1 is the identity. The stages below need at least two elements.
+    if (n < 2)
+        return;
+
+    // Stage len = 2 has the single twiddle 1: a plain butterfly, no multiplication.
+    for (std::size_t i = 0; i < n; i += 2) {
+        const std::complex<T> u = data[i];
+        const std::complex<T> v = data[i + 1];
+        data[i] = u + v;
+        data[i + 1] = u - v;
+    }
+    if (n < 4)
+        return;
+
+    // Stage len = 4 has twiddles 1 and -i (forward) or +i (inverse). The second
+    // one is a swap of components with a sign, so no complex product is needed.
+    for (std::size_t i = 0; i < n; i += 4) {
+        const std::complex<T> a2 = data[i + 2];
+        const std::complex<T> a3 = data[i + 3];
+        const std::complex<T> t = {sign * a3.imag(), -sign * a3.real()};
+        const std::complex<T> u0 = data[i];
+        const std::complex<T> u1 = data[i + 1];
+        data[i] = u0 + a2;
+        data[i + 2] = u0 - a2;
+        data[i + 1] = u1 + t;
+        data[i + 3] = u1 - t;
+    }
+
+    // Remaining stages use the table; the len = 2 and len = 4 entries occupy
+    // offsets 0 and 1..2, so the generic loop starts at offset 3.
+    std::size_t offset = 3;
+    for (std::size_t len = 8; len <= n; len <<= 1) {
         const std::size_t half = len >> 1;
         const std::complex<T>* w = stage_tw.data() + offset;
         offset += half;
@@ -454,8 +484,29 @@ void radix4_in_place(const std::vector<std::complex<T>>& stage_tw, std::size_t n
     // Conjugation for the inverse transform, folded into a sign on the imaginary part.
     const T sign = inverse ? T(-1) : T(1);
 
-    std::size_t offset = 0;
-    for (std::size_t len = 4; len <= n; len <<= 2) {
+    // Lengths below 4 have no radix-4 stage, so the code below must not run.
+    if (n < 4)
+        return;
+
+    // Stage len = 4 (q = 1): every twiddle is 1, so only the rotation remains.
+    for (std::size_t i = 0; i < n; i += 4) {
+        const std::complex<T> a0 = data[i];
+        const std::complex<T> a1 = data[i + 1];
+        const std::complex<T> a2 = data[i + 2];
+        const std::complex<T> a3 = data[i + 3];
+        const std::complex<T> t0 = a0 + a2;
+        const std::complex<T> t1 = a0 - a2;
+        const std::complex<T> t2 = a1 + a3;
+        const std::complex<T> t3 = rotate(a1 - a3);
+        data[i] = t0 + t2;
+        data[i + 1] = t1 + t3;
+        data[i + 2] = t0 - t2;
+        data[i + 3] = t1 - t3;
+    }
+
+    // The len = 4 stage occupies the first 3 table entries (q = 1).
+    std::size_t offset = 3;
+    for (std::size_t len = 16; len <= n; len <<= 2) {
         const std::size_t q = len >> 2;
         const std::complex<T>* w1 = stage_tw.data() + offset;
         const std::complex<T>* w2 = w1 + q;
