@@ -15,9 +15,17 @@ Status as of 0.1.0.
      (length 4) no longer multiply by twiddles that equal 1 or ±i. Measured on
      double precision, shared VM: radix-2 lengths 5–16% faster (N=128: 0.73 to
      0.61 µs; N=512: 3.74 to 3.31 µs); radix-4 changes are within the ±5% noise.
+   - Measured and not adopted: making the inverse direction a compile-time
+     parameter of the radix kernels. Forward improved 5-7% at N=2048 and 8192, the
+     inverse did not change, and the difference was within run-to-run noise.
+   - Measured, not yet addressed: cost per N*log2(N) rises about 55% from N=1024
+     (0.63 ns) to N=2^18 and above (0.98 ns), in double precision, consistent with
+     cache misses once data exceeds the L2 cache. The candidate is a blocked
+     decomposition (six-step or recursive) for large N, which is a design change
+     rather than a kernel tweak.
    - Pending: SIMD kernels (not started; a portable version needs per-ISA code
-     paths and an MSVC build, so it is a separate decision), block layouts for the
-     radix-2 kernel, faster mixed-radix passes so Rader can cover composite p-1,
-     and per-stage tables for the direct DFT
+     paths and an MSVC build, so it is a separate decision), the blocked
+     decomposition above, faster mixed-radix passes so Rader can cover composite
+     p-1, and per-stage tables for the direct DFT
 8. Batch execution and parallelism: pending
 9. 2D and 3D extensions: pending
