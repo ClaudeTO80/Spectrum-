@@ -227,7 +227,11 @@ void direct_dft(const std::vector<std::complex<double>>& twiddles, bool inverse,
  * contiguous block of @p out, then combines them with the identity
  *   X[k + m*q] = sum_r W_n^(r*k) * Y_r[k] * W_p^(r*q).
  *
- * @param twiddles  Table of exp(-2*pi*i*j/N), j in [0, N), N the plan length.
+ * The twiddles of each level come from @p tables, laid out per level as the
+ * p*m values W_n^(r*k) at index r*m + k, followed by the p values W_p^j.
+ * The next level's block starts right after this one.
+ *
+ * @param tables    Table block for this level, in precision T (see the plan).
  * @param factors   Prime factors of N, with multiplicity.
  * @param level     Index in @p factors of the factor to split on.
  * @param in        Input; sample j is at in[j * in_stride].
@@ -239,7 +243,7 @@ void direct_dft(const std::vector<std::complex<double>>& twiddles, bool inverse,
  * @param inverse   True for the inverse transform (conjugated twiddles).
  */
 template<typename T>
-void mixed_radix_rec(const std::vector<std::complex<double>>& twiddles,
+void mixed_radix_rec(const std::complex<T>* tables,
                      const std::vector<std::size_t>& factors, std::size_t level,
                      const std::complex<T>* in, std::size_t in_stride, std::size_t n,
                      std::complex<T>* out, std::complex<T>* tmp, bool inverse) {
@@ -248,35 +252,40 @@ void mixed_radix_rec(const std::vector<std::complex<double>>& twiddles,
         return;
     }
 
-    const std::size_t N = twiddles.size();
     const std::size_t p = factors[level];
     const std::size_t m = n / p;
-
-    // W_N^j for j < N, conjugated for the inverse transform.
-    auto w = [&](std::size_t j) {
-        const std::complex<double> wd = twiddles[j];
-        return std::complex<T>(static_cast<T>(wd.real()),
-                               static_cast<T>(inverse ? -wd.imag() : wd.imag()));
-    };
+    const std::complex<T>* tw = tables;       // W_n^(r*k), index r*m + k
+    const std::complex<T>* tp = tables + p * m;  // W_p^j, index j
+    const std::size_t block = p * m + p;
 
     // Y_r: transform of the subsequence in[r + p*j], stored in out[r*m, (r+1)*m).
+    // Every child uses the same table block, since they share the length m.
     for (std::size_t r = 0; r < p; ++r)
-        mixed_radix_rec(twiddles, factors, level + 1, in + r * in_stride, in_stride * p,
+        mixed_radix_rec(tables + block, factors, level + 1, in + r * in_stride, in_stride * p,
                         m, out + r * m, tmp, inverse);
 
-    // Pass 1: apply the cross-stage twiddles W_n^(r*k) into scratch.
-    const std::size_t step = N / n;
-    for (std::size_t r = 0; r < p; ++r)
-        for (std::size_t k = 0; k < m; ++k)
-            tmp[r * m + k] = cmul(out[r * m + k], w(r * k * step));
+    // Conjugation for the inverse transform, folded into a sign on the imaginary part.
+    const T sign = inverse ? T(-1) : T(1);
+    auto oriented = [sign](std::complex<T> w) {
+        return std::complex<T>(w.real(), sign * w.imag());
+    };
 
-    // Pass 2: length-p DFT across r for each k; outputs go to their final places.
-    const std::size_t pstep = N / p;
+    // Pass 1: apply the cross-stage twiddles into scratch.
+    for (std::size_t i = 0; i < p * m; ++i)
+        tmp[i] = cmul(out[i], oriented(tw[i]));
+
+    // Pass 2: length-p DFT across r for each k. The exponent r*q mod p is
+    // updated incrementally, which avoids a modulo in the innermost loop.
     for (std::size_t k = 0; k < m; ++k) {
         for (std::size_t q = 0; q < p; ++q) {
             std::complex<T> acc{T(0), T(0)};
-            for (std::size_t r = 0; r < p; ++r)
-                acc += cmul(tmp[r * m + k], w(((r * q) % p) * pstep));
+            std::size_t idx = 0;
+            for (std::size_t r = 0; r < p; ++r) {
+                acc += cmul(tmp[r * m + k], oriented(tp[idx]));
+                idx += q;
+                if (idx >= p)
+                    idx -= p;
+            }
             out[k + m * q] = acc;
         }
     }
@@ -526,6 +535,12 @@ struct FFTPlan<T>::Impl {
         if (length == 0)
             throw InvalidSizeException("FFT length must be greater than zero");
 
+        // exp(-2*pi*i*j/length) in T, from the double table, for j in [0, length).
+        auto unit_root = [this](std::size_t j) {
+            const std::complex<double> w = twiddles[j];
+            return std::complex<T>(static_cast<T>(w.real()), static_cast<T>(w.imag()));
+        };
+
         twiddles.reserve(length);
         const double step = 2.0 * std::numbers::pi / static_cast<double>(length);
         for (std::size_t k = 0; k < length; ++k)
@@ -555,7 +570,21 @@ struct FFTPlan<T>::Impl {
                     }
                 }
                 break;
-            case Algorithm::MixedRadix: factors = prime_factors(length); break;
+            case Algorithm::MixedRadix: {
+                factors = prime_factors(length);
+                std::size_t level_len = length;
+                for (const std::size_t p : factors) {
+                    const std::size_t m = level_len / p;
+                    const std::size_t step = length / level_len;
+                    for (std::size_t r = 0; r < p; ++r)
+                        for (std::size_t k = 0; k < m; ++k)
+                            mixed_tw.push_back(unit_root(r * k * step));
+                    for (std::size_t j = 0; j < p; ++j)
+                        mixed_tw.push_back(unit_root(j * (length / p)));
+                    level_len = m;
+                }
+                break;
+            }
             case Algorithm::Rader: {
                 const std::size_t len = length - 1;
                 const std::uint64_t g = primitive_root(length);
@@ -617,6 +646,7 @@ struct FFTPlan<T>::Impl {
     SwapList swaps;
     std::vector<std::complex<T>> stage_tw;  // Radix2 and Radix4, see the kernels.
     std::vector<std::size_t> factors;       // MixedRadix only: prime factors of length.
+    std::vector<std::complex<T>> mixed_tw;  // MixedRadix only: per-level twiddle blocks, see mixed_radix_rec.
     std::vector<std::complex<T>> chirp;     // Bluestein only: exp(-i*pi*j^2/n).
     std::vector<std::complex<T>> kernel;    // Bluestein and Rader: forward transform of the kernel.
     std::unique_ptr<FFTPlan<T>> inner;      // Bluestein and Rader: plan of length kernel.size().
@@ -716,7 +746,7 @@ void FFTPlan<T>::execute(Direction direction,
         case Algorithm::MixedRadix:
             if (workspace.capacity() < n)
                 workspace.resize(n);
-            mixed_radix_rec(impl_->twiddles, impl_->factors, 0, in, 1, n, out,
+            mixed_radix_rec(impl_->mixed_tw.data(), impl_->factors, 0, in, 1, n, out,
                             workspace.data(), inverse);
             break;
         case Algorithm::Bluestein: {
