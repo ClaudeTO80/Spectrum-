@@ -18,14 +18,17 @@ Status as of 0.1.0.
    - Measured and not adopted: making the inverse direction a compile-time
      parameter of the radix kernels. Forward improved 5-7% at N=2048 and 8192, the
      inverse did not change, and the difference was within run-to-run noise.
-   - Measured, not yet addressed: cost per N*log2(N) rises about 55% from N=1024
-     (0.63 ns) to N=2^18 and above (0.98 ns), in double precision, consistent with
-     cache misses once data exceeds the L2 cache. The candidate is a blocked
-     decomposition (six-step or recursive) for large N, which is a design change
-     rather than a kernel tweak.
+   - Measured: cost per N*log2(N) rises about 55% from N=1024 (0.63 ns) to N=2^18
+     and above (0.98 ns), in double precision, consistent with cache misses once
+     data exceeds the L2 cache.
+   - Measured and not adopted: a four-step prototype (N = R*C, column blocks of 8,
+     tiled transpose, twiddles from a table). It is correct (relative error about
+     5e-16), but 1.2-1.4 times slower than FFTPlan for N from 2^16 to 2^20. Removing
+     the twiddle multiply saves only about 10%, so the cost is in the gathers and
+     transposes. An estimate of the ceiling: at N=2^20 the gap to the in-cache rate
+     is about 7 ms of the 20 ms total, so blocking could recover at most part of it.
    - Pending: SIMD kernels (not started; a portable version needs per-ISA code
-     paths and an MSVC build, so it is a separate decision), the blocked
-     decomposition above, faster mixed-radix passes so Rader can cover composite
+     paths and an MSVC build, so it is a separate decision), faster mixed-radix passes so Rader can cover composite
      p-1, and per-stage tables for the direct DFT
 8. Batch execution and parallelism: pending
 9. 2D and 3D extensions: pending
