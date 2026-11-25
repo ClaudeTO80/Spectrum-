@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "fft/exceptions.hpp"
+#include "fft_internal.hpp"
 
 namespace fft {
 
@@ -157,33 +158,6 @@ SwapList build_digit_reversal_swaps(std::size_t n) {
             swaps.emplace_back(i, r);
     }
     return swaps;
-}
-
-/**
- * @brief Returns the scale factor applied to the result of a transform.
- * @param normalization Plan normalization convention.
- * @param direction     Transform direction.
- * @param n             Transform length.
- */
-double scale_factor(Normalization normalization, Direction direction, std::size_t n) {
-    const double dn = static_cast<double>(n);
-    const bool inverse = direction == Direction::Inverse;
-    switch (normalization) {
-        case Normalization::None:    return 1.0;
-        case Normalization::Forward: return inverse ? 1.0 : 1.0 / dn;
-        case Normalization::Inverse: return inverse ? 1.0 / dn : 1.0;
-        case Normalization::Ortho:   return 1.0 / std::sqrt(dn);
-    }
-    return 1.0;
-}
-
-/**
- * @brief Returns true if the byte ranges [a, a+bytes) and [b, b+bytes) intersect.
- */
-bool ranges_overlap(const void* a, const void* b, std::size_t bytes) {
-    const auto pa = reinterpret_cast<std::uintptr_t>(a);
-    const auto pb = reinterpret_cast<std::uintptr_t>(b);
-    return pa < pb + bytes && pb < pa + bytes;
 }
 
 /**
@@ -712,8 +686,7 @@ template<typename T>
 void FFTPlan<T>::execute(Direction direction,
                          const std::complex<T>* in,
                          std::complex<T>* out) const {
-    // Empty until needed: radix paths never touch it, and an empty vector
-    // does not allocate.
+    // Empty until needed: radix and direct paths never touch it.
     Workspace<T> workspace;
     execute(direction, in, out, workspace);
 }
@@ -723,14 +696,30 @@ void FFTPlan<T>::execute(Direction direction,
                          const std::complex<T>* in,
                          std::complex<T>* out,
                          Workspace<T>& workspace) const {
+    const std::size_t need = workspace_size();
+    if (workspace.capacity() < need)
+        workspace.resize(need);
+    execute(direction, in, out, workspace.data(), workspace.capacity());
+}
+
+template<typename T>
+void FFTPlan<T>::execute(Direction direction,
+                         const std::complex<T>* in,
+                         std::complex<T>* out,
+                         std::complex<T>* scratch,
+                         std::size_t scratch_size) const {
     if (!impl_)
         throw FFTException("FFTPlan::execute() called on a moved-from plan");
     if (in == nullptr || out == nullptr)
         throw InvalidBufferException("FFT input and output buffers must not be null");
 
     const std::size_t n = impl_->length;
-    if (ranges_overlap(in, out, n * sizeof(std::complex<T>)))
+    if (detail::ranges_overlap(in, n * sizeof(std::complex<T>), out, n * sizeof(std::complex<T>)))
         throw InvalidBufferException("FFT input and output buffers must not overlap");
+
+    const std::size_t need = workspace_size();
+    if (need > 0 && (scratch == nullptr || scratch_size < need))
+        throw InvalidBufferException("FFT scratch buffer is smaller than workspace_size()");
 
     const bool inverse = direction == Direction::Inverse;
 
@@ -744,33 +733,23 @@ void FFTPlan<T>::execute(Direction direction,
             radix2_in_place(impl_->stage_tw, n, impl_->swaps, inverse, out);
             break;
         case Algorithm::MixedRadix:
-            if (workspace.capacity() < n)
-                workspace.resize(n);
             mixed_radix_rec(impl_->mixed_tw.data(), impl_->factors, 0, in, 1, n, out,
-                            workspace.data(), inverse);
+                            scratch, inverse);
             break;
-        case Algorithm::Bluestein: {
-            const std::size_t need = 2 * impl_->kernel.size();
-            if (workspace.capacity() < need)
-                workspace.resize(need);
+        case Algorithm::Bluestein:
             bluestein_transform(impl_->chirp, impl_->kernel, *impl_->inner,
-                                in, out, workspace.data(), inverse);
+                                in, out, scratch, inverse);
             break;
-        }
-        case Algorithm::Rader: {
-            const std::size_t need = 2 * impl_->kernel.size();
-            if (workspace.capacity() < need)
-                workspace.resize(need);
+        case Algorithm::Rader:
             rader_transform(impl_->perm, impl_->kernel, *impl_->inner,
-                            in, out, workspace.data(), inverse);
+                            in, out, scratch, inverse);
             break;
-        }
         default:
             direct_dft(impl_->twiddles, inverse, in, out);
             break;
     }
 
-    const double scale = scale_factor(impl_->normalization, direction, n);
+    const double scale = detail::scale_factor(impl_->normalization, direction, n);
     if (scale != 1.0) {
         const auto s = static_cast<T>(scale);
         for (std::size_t k = 0; k < n; ++k)

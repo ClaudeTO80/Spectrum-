@@ -129,6 +129,26 @@ public:
                  std::complex<T>* out,
                  Workspace<T>& workspace) const;
 
+    /**
+     * @brief Executes the transform using scratch memory given as a raw buffer.
+     *
+     * This is the form the workspace overload uses. It exists so that other
+     * components, such as RealFFTPlan, can pass a region of their own scratch.
+     *
+     * @param scratch      Scratch buffer of at least @p scratch_size elements,
+     *                     which must be at least workspace_size(). It must not
+     *                     overlap @p in or @p out.
+     * @param scratch_size Number of elements in @p scratch.
+     * @throws InvalidBufferException if a pointer is null, the input and output
+     *         overlap, or the scratch is too small.
+     * @throws FFTException if the plan was moved from.
+     */
+    void execute(Direction direction,
+                 const std::complex<T>* in,
+                 std::complex<T>* out,
+                 std::complex<T>* scratch,
+                 std::size_t scratch_size) const;
+
 private:
     struct Impl;
     std::unique_ptr<Impl> impl_;
