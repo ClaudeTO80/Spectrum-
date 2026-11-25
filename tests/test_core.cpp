@@ -113,7 +113,7 @@ static void test_plan_metadata() {
     FFT_TEST_CHECK(pf.precision() == fft::Precision::Float32);
     FFT_TEST_CHECK(pf.normalization() == fft::Normalization::Inverse);
     FFT_TEST_CHECK(pf.shape().element_count() == 256);
-    FFT_TEST_CHECK(pf.algorithm() == fft::Algorithm::DirectDFT);
+    FFT_TEST_CHECK(pf.algorithm() == fft::Algorithm::Radix2);
 
     fft::FFTPlan<double> pd(1024, fft::Normalization::Ortho);
     FFT_TEST_CHECK(pd.size() == 1024);
@@ -231,6 +231,49 @@ static void test_simple_api() {
         caught = true;
     }
     FFT_TEST_CHECK(caught);
+}
+
+/**
+ * @brief Verifies radix-2 selection and accuracy on power-of-two lengths.
+ */
+static void test_radix2() {
+    // Power-of-two lengths select Radix2; others fall back to DirectDFT.
+    FFT_TEST_CHECK(fft::FFTPlan<double>(1).algorithm() == fft::Algorithm::Radix2);
+    FFT_TEST_CHECK(fft::FFTPlan<double>(64).algorithm() == fft::Algorithm::Radix2);
+    FFT_TEST_CHECK(fft::FFTPlan<double>(30).algorithm() == fft::Algorithm::DirectDFT);
+
+    const std::size_t sizes[] = {4, 64, 128, 256};
+    for (const std::size_t n : sizes) {
+        const auto x = make_input(n, static_cast<std::uint32_t>(n) * 31u + 5u);
+        const auto ref_fwd = reference_dft(x, -1);
+        const auto ref_inv = reference_dft(x, +1);
+
+        fft::FFTPlan<double> pd(n, fft::Normalization::None);
+        fft::FFTPlan<float> pf(n, fft::Normalization::None);
+
+        FFT_TEST_CHECK(max_abs_error(run_plan(pd, fft::Direction::Forward, x), ref_fwd) < 1e-11 * static_cast<double>(n));
+        FFT_TEST_CHECK(max_abs_error(run_plan(pd, fft::Direction::Inverse, x), ref_inv) < 1e-11 * static_cast<double>(n));
+        FFT_TEST_CHECK(max_abs_error(run_plan(pf, fft::Direction::Forward, x), ref_fwd) < 1e-4 * static_cast<double>(n));
+        FFT_TEST_CHECK(max_abs_error(run_plan(pf, fft::Direction::Inverse, x), ref_inv) < 1e-4 * static_cast<double>(n));
+    }
+
+    // Round trip and Parseval on a larger power-of-two length.
+    const std::size_t big = 1024;
+    const auto x = make_input(big, 4242u);
+    fft::FFTPlan<double> ortho(big, fft::Normalization::Ortho);
+    const auto X = run_plan(ortho, fft::Direction::Forward, x);
+    double ex = 0.0, eX = 0.0;
+    for (std::size_t i = 0; i < big; ++i) {
+        ex += std::norm(x[i]);
+        eX += std::norm(X[i]);
+    }
+    FFT_TEST_CHECK(std::abs(ex - eX) < 1e-9);
+
+    fft::FFTPlan<double> plan(big);
+    const auto y = run_plan(plan, fft::Direction::Inverse,
+                            run_plan(plan, fft::Direction::Forward, x));
+    for (std::size_t i = 0; i < big; ++i)
+        FFT_TEST_CHECK(std::abs(y[i] - x[i]) < 1e-12);
 }
 
 /**
@@ -379,7 +422,7 @@ static void test_move_semantics() {
     fft::FFTPlan<double> b(std::move(a));
 
     FFT_TEST_CHECK(b.size() == 4);
-    FFT_TEST_CHECK(b.algorithm() == fft::Algorithm::DirectDFT);
+    FFT_TEST_CHECK(b.algorithm() == fft::Algorithm::Radix2);
 
     FFT_TEST_CHECK(a.size() == 0);
     FFT_TEST_CHECK(a.normalization() == fft::Normalization::None);
@@ -413,6 +456,7 @@ static void test_move_semantics() {
 
 int main() {
     test_simple_api();
+    test_radix2();
     test_plan_metadata();
     test_invalid_sizes();
     test_shape_overflow();

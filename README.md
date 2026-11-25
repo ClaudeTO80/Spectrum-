@@ -10,7 +10,7 @@ to accommodate future 2D and 3D transforms.
 
 The current code provides the initial compiled-library layout, public types,
 dimension descriptors, workspace storage, plan metadata, CMake installation and
-a basic test/CI setup. The direct DFT (complex, float and double) is implemented; other algorithms are not yet.
+a basic test/CI setup. The direct DFT and the radix-2 complex FFT (float and double) are implemented; other algorithms are not yet.
 
 ## Usage
 
@@ -39,6 +39,7 @@ plan.execute(fft::Direction::Forward, in.data(), out.data());
 
 Normalization options: `None`, `Forward`, `Inverse` (default), `Ortho`.
 Input and output buffers must not overlap (in-place is not supported yet).
+The planner uses radix-2 for power-of-two lengths and a direct DFT otherwise.
 A plan is immutable and can be shared across threads that use their own buffers.
 `fft::Workspace` is provided for caller-owned scratch memory, but no transform
 uses it yet.

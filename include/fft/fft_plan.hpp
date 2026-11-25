@@ -14,8 +14,9 @@ namespace fft {
 /**
  * @brief Immutable 1D complex FFT plan for a given precision.
  *
- * The plan selects an algorithm at construction time and can then execute
- * transforms of its length any number of times. Execution does not modify
+ * The plan selects an algorithm at construction time: Radix2 (iterative
+ * Cooley-Tukey) when the length is a power of two, DirectDFT otherwise.
+ * It can then execute transforms of its length any number of times. Execution does not modify
  * the plan, so a single plan may be shared by concurrent callers.
  *
  * Sign convention: Forward uses exp(-2*pi*i*k*n/N), Inverse uses
@@ -69,7 +70,7 @@ public:
     /** @brief Floating-point precision of the plan type @c T. */
     [[nodiscard]] Precision precision() const noexcept;
 
-    /** @brief Algorithm chosen at construction; Unselected if moved from. */
+    /** @brief Algorithm chosen at construction (Radix2 or DirectDFT); Unselected if moved from. */
     [[nodiscard]] Algorithm algorithm() const noexcept;
 
     /**
@@ -78,8 +79,7 @@ public:
      * @param direction Forward or Inverse.
      * @param in        Input buffer of size() elements. Must not be null.
      * @param out       Output buffer of size() elements. Must not be null and
-     *                  must not overlap @p in; in-place execution is not
-     *                  supported by the direct DFT.
+     *                  must not overlap @p in.
      * @throws InvalidBufferException if a pointer is null or the buffers overlap.
      * @throws FFTException if the plan was moved from.
      */

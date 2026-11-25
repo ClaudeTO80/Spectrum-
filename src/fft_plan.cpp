@@ -1,5 +1,7 @@
 #include "fft/fft_plan.hpp"
 
+#include <algorithm>
+#include <bit>
 #include <cmath>
 #include <cstdint>
 #include <numbers>
@@ -42,7 +44,9 @@ struct FFTPlan<T>::Impl {
 
 template<typename T>
 FFTPlan<T>::FFTPlan(std::size_t size, Normalization normalization)
-    : impl_(std::make_unique<Impl>(size, normalization, Algorithm::DirectDFT)) {}
+    : impl_(std::make_unique<Impl>(
+          size, normalization,
+          std::has_single_bit(size) ? Algorithm::Radix2 : Algorithm::DirectDFT)) {}
 
 template<typename T>
 FFTPlan<T>::~FFTPlan() = default;
@@ -83,14 +87,14 @@ Algorithm FFTPlan<T>::algorithm() const noexcept {
     return impl_ ? impl_->algorithm : Algorithm::Unselected;
 }
 
+namespace {
+
 /**
  * @brief Returns the scale factor applied to the result of a transform.
  * @param normalization Plan normalization convention.
  * @param direction     Transform direction.
  * @param n            Transform length.
  */
-namespace {
-
 double scale_factor(Normalization normalization, Direction direction, std::size_t n) {
     const double dn = static_cast<double>(n);
     const bool inverse = direction == Direction::Inverse;
@@ -112,6 +116,66 @@ bool ranges_overlap(const void* a, const void* b, std::size_t bytes) {
     return pa < pb + bytes && pb < pa + bytes;
 }
 
+/**
+ * @brief Direct O(N^2) DFT, computed in double precision.
+ * @param twiddles Table of exp(-2*pi*i*k/N), k in [0, N).
+ * @param inverse  True for the inverse transform (conjugated twiddles).
+ * @param in       Input samples, N elements, not aliased with @p out.
+ * @param out      Output spectrum, N elements, before scaling.
+ */
+template<typename T>
+void direct_dft(const std::vector<std::complex<double>>& twiddles, bool inverse,
+                const std::complex<T>* in, std::complex<T>* out) {
+    const std::size_t n = twiddles.size();
+    for (std::size_t k = 0; k < n; ++k) {
+        std::complex<double> acc{0.0, 0.0};
+        for (std::size_t j = 0; j < n; ++j) {
+            const std::complex<double> w = twiddles[(k * j) % n];
+            acc += std::complex<double>(in[j]) * (inverse ? std::conj(w) : w);
+        }
+        out[k] = std::complex<T>(static_cast<T>(acc.real()), static_cast<T>(acc.imag()));
+    }
+}
+
+/**
+ * @brief In-place iterative radix-2 decimation-in-time FFT (Cooley-Tukey).
+ * @param twiddles Table of exp(-2*pi*i*k/N), k in [0, N); N must be a power of two.
+ * @param inverse  True for the inverse transform (conjugated twiddles).
+ * @param data     N elements, transformed in place, before scaling.
+ */
+template<typename T>
+void radix2_in_place(const std::vector<std::complex<double>>& twiddles, bool inverse,
+                     std::complex<T>* data) {
+    const std::size_t n = twiddles.size();
+
+    // Bit-reversal permutation.
+    for (std::size_t i = 1, j = 0; i < n; ++i) {
+        std::size_t bit = n >> 1;
+        for (; j & bit; bit >>= 1)
+            j ^= bit;
+        j ^= bit;
+        if (i < j)
+            std::swap(data[i], data[j]);
+    }
+
+    // Butterfly stages: combine pairs of sub-transforms of length len/2.
+    for (std::size_t len = 2; len <= n; len <<= 1) {
+        const std::size_t half = len >> 1;
+        const std::size_t stride = n / len;
+        for (std::size_t start = 0; start < n; start += len) {
+            for (std::size_t k = 0; k < half; ++k) {
+                const std::complex<double> wd = twiddles[k * stride];
+                const std::complex<T> w(static_cast<T>(wd.real()),
+                                        static_cast<T>(inverse ? -wd.imag() : wd.imag()));
+                const std::complex<T> u = data[start + k];
+                const std::complex<T> v = data[start + k + half] * w;
+                data[start + k] = u + v;
+                data[start + k + half] = u - v;
+            }
+        }
+    }
+}
+
 } // namespace
 
 template<typename T>
@@ -128,19 +192,19 @@ void FFTPlan<T>::execute(Direction direction,
         throw InvalidBufferException("FFT input and output buffers must not overlap");
 
     const bool inverse = direction == Direction::Inverse;
-    const double scale = scale_factor(impl_->normalization, direction, n);
-    const auto& twiddles = impl_->twiddles;
 
-    // X[k] = scale * sum_j x[j] * W^(k*j), with W = exp(-2*pi*i/N) for Forward.
-    // The index (k*j) mod N keeps the twiddle angle within one period.
-    for (std::size_t k = 0; k < n; ++k) {
-        std::complex<double> acc{0.0, 0.0};
-        for (std::size_t j = 0; j < n; ++j) {
-            const std::complex<double> w = twiddles[(k * j) % n];
-            acc += std::complex<double>(in[j]) * (inverse ? std::conj(w) : w);
-        }
-        out[k] = std::complex<T>(static_cast<T>(acc.real() * scale),
-                                 static_cast<T>(acc.imag() * scale));
+    if (impl_->algorithm == Algorithm::Radix2) {
+        std::copy(in, in + n, out);
+        radix2_in_place(impl_->twiddles, inverse, out);
+    } else {
+        direct_dft(impl_->twiddles, inverse, in, out);
+    }
+
+    const double scale = scale_factor(impl_->normalization, direction, n);
+    if (scale != 1.0) {
+        const auto s = static_cast<T>(scale);
+        for (std::size_t k = 0; k < n; ++k)
+            out[k] *= s;
     }
 }
 
