@@ -27,8 +27,13 @@ Status as of 0.1.0.
      the twiddle multiply saves only about 10%, so the cost is in the gathers and
      transposes. An estimate of the ceiling: at N=2^20 the gap to the in-cache rate
      is about 7 ms of the 20 ms total, so blocking could recover at most part of it.
+   - Done: closed-form radix-3 and radix-5 butterflies in the mixed-radix path.
+     Measured, double precision, forward, shared VM: 243 from 43 to 17 ns per
+     element; 125 from 36 to 11; 625 from 46 to 13; 3125 from 57 to 16. Power-of-two
+     lengths are unchanged. The generic length-p loop remains for other factors.
    - Pending: SIMD kernels (not started; a portable version needs per-ISA code
-     paths and an MSVC build, so it is a separate decision), faster mixed-radix passes so Rader can cover composite
-     p-1, and per-stage tables for the direct DFT
+     paths and an MSVC build, so it is a separate decision), faster mixed-radix
+     passes for factors above 5 and for the data movement between passes so Rader
+     can cover composite p-1, and per-stage tables for the direct DFT
 8. Batch execution and parallelism: pending
 9. 2D and 3D extensions: pending

@@ -284,7 +284,8 @@ static void test_radix_kernels() {
  * @brief Verifies the mixed-radix path against the reference DFT and its invariants.
  */
 static void test_mixed_radix() {
-    const std::size_t sizes[] = {3, 5, 6, 9, 12, 15, 20, 30, 45, 49, 60, 100, 210, 360};
+    // 125, 243 and 625 exercise the radix-3 and radix-5 butterflies at several levels.
+    const std::size_t sizes[] = {3, 5, 6, 9, 12, 15, 20, 30, 45, 49, 60, 100, 125, 210, 243, 360, 625};
     for (const std::size_t n : sizes) {
         // 3 and 5 are prime and use the direct DFT; the rest are composite.
         const bool prime = (n == 3 || n == 5);

@@ -194,6 +194,80 @@ void direct_dft(const std::vector<std::complex<double>>& twiddles, bool inverse,
 }
 
 /**
+ * @brief Length-3 DFT across the three rows of a mixed-radix pass.
+ *
+ * Reads tmp[r*m + k] for r = 0..2 (already twiddled) and writes out[k + m*q],
+ * with W_3 = exp(-2*pi*i/3). Uses t1 = a1 + a2, t2 = a1 - a2 and
+ * m0 = a0 - t1/2, so that X0 = a0 + t1 and X1,2 = m0 -/+ i*(sqrt(3)/2)*t2.
+ * The sign of the imaginary rotation is negative for the forward transform.
+ */
+template<typename T>
+void butterfly3_pass(const std::complex<T>* tmp, std::size_t m,
+                     std::complex<T>* out, bool inverse) {
+    const T half = T(0.5);
+    const T c = static_cast<T>(std::numbers::sqrt3_v<double> / 2.0) * (inverse ? T(1) : T(-1));
+    for (std::size_t k = 0; k < m; ++k) {
+        const std::complex<T> a0 = tmp[k];
+        const std::complex<T> a1 = tmp[m + k];
+        const std::complex<T> a2 = tmp[2 * m + k];
+        const std::complex<T> t1 = a1 + a2;
+        const std::complex<T> t2 = a1 - a2;
+        const std::complex<T> m0 = a0 - t1 * half;
+        // c * i * t2 with i * (x + iy) = -y + ix.
+        const std::complex<T> v{-c * t2.imag(), c * t2.real()};
+        out[k] = a0 + t1;
+        out[k + m] = m0 + v;
+        out[k + 2 * m] = m0 - v;
+    }
+}
+
+/**
+ * @brief Length-5 DFT across the five rows of a mixed-radix pass.
+ *
+ * Reads tmp[r*m + k] for r = 0..4 (already twiddled) and writes out[k + m*q],
+ * with W_5 = exp(-2*pi*i/5). With t1 = a1 + a4, t2 = a2 + a3, t3 = a1 - a4,
+ * t4 = a2 - a3, and c1, c2, s1, s2 the cosines and sines of 2*pi/5 and 4*pi/5:
+ *   X0 = a0 + t1 + t2,
+ *   m1 = a0 + c1*t1 + c2*t2,  n1 = s1*t3 + s2*t4,
+ *   m2 = a0 + c2*t1 + c1*t2,  n2 = s2*t3 - s1*t4,
+ *   X1 = m1 + sg*i*n1,  X4 = m1 - sg*i*n1,  X2 = m2 + sg*i*n2,  X3 = m2 - sg*i*n2,
+ * where sg = -1 for the forward transform and +1 for the inverse.
+ */
+template<typename T>
+void butterfly5_pass(const std::complex<T>* tmp, std::size_t m,
+                     std::complex<T>* out, bool inverse) {
+    const T pi = static_cast<T>(std::numbers::pi_v<double>);
+    const T c1 = std::cos(T(2) * pi / T(5));
+    const T c2 = std::cos(T(4) * pi / T(5));
+    const T s1 = std::sin(T(2) * pi / T(5));
+    const T s2 = std::sin(T(4) * pi / T(5));
+    const T sg = inverse ? T(1) : T(-1);
+    for (std::size_t k = 0; k < m; ++k) {
+        const std::complex<T> a0 = tmp[k];
+        const std::complex<T> a1 = tmp[m + k];
+        const std::complex<T> a2 = tmp[2 * m + k];
+        const std::complex<T> a3 = tmp[3 * m + k];
+        const std::complex<T> a4 = tmp[4 * m + k];
+        const std::complex<T> t1 = a1 + a4;
+        const std::complex<T> t2 = a2 + a3;
+        const std::complex<T> t3 = a1 - a4;
+        const std::complex<T> t4 = a2 - a3;
+        const std::complex<T> m1 = a0 + t1 * c1 + t2 * c2;
+        const std::complex<T> m2 = a0 + t1 * c2 + t2 * c1;
+        const std::complex<T> n1 = t3 * s1 + t4 * s2;
+        const std::complex<T> n2 = t3 * s2 - t4 * s1;
+        // sg * i * n with i * (x + iy) = -y + ix.
+        const std::complex<T> u1{-sg * n1.imag(), sg * n1.real()};
+        const std::complex<T> u2{-sg * n2.imag(), sg * n2.real()};
+        out[k] = a0 + t1 + t2;
+        out[k + m] = m1 + u1;
+        out[k + 4 * m] = m1 - u1;
+        out[k + 2 * m] = m2 + u2;
+        out[k + 3 * m] = m2 - u2;
+    }
+}
+
+/**
  * @brief Recursive decimation-in-time mixed-radix transform of length n.
  *
  * Splits the length-n transform on the prime factor p = factors[level] into p
@@ -248,8 +322,18 @@ void mixed_radix_rec(const std::complex<T>* tables,
     for (std::size_t i = 0; i < p * m; ++i)
         tmp[i] = cmul(out[i], oriented(tw[i]));
 
-    // Pass 2: length-p DFT across r for each k. The exponent r*q mod p is
-    // updated incrementally, which avoids a modulo in the innermost loop.
+    // Pass 2: length-p DFT across r for each k. Factors 3 and 5 have closed-form
+    // butterflies; other factors use the generic loop below.
+    if (p == 3) {
+        butterfly3_pass(tmp, m, out, inverse);
+        return;
+    }
+    if (p == 5) {
+        butterfly5_pass(tmp, m, out, inverse);
+        return;
+    }
+    // Generic length-p DFT. The exponent r*q mod p is updated incrementally,
+    // which avoids a modulo in the innermost loop.
     for (std::size_t k = 0; k < m; ++k) {
         for (std::size_t q = 0; q < p; ++q) {
             std::complex<T> acc{T(0), T(0)};
