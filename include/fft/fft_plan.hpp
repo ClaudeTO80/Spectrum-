@@ -15,10 +15,14 @@ namespace fft {
 /**
  * @brief Immutable 1D complex FFT plan for a given precision.
  *
- * The plan selects an algorithm at construction time: Radix4 (iterative
- * Cooley-Tukey) for powers of four, Radix2 for other powers of two, MixedRadix
- * (recursive Cooley-Tukey over the prime factors) for other composite lengths,
- * and DirectDFT for primes.
+ * The plan selects an algorithm at construction time:
+ *  - Radix4 (iterative Cooley-Tukey) for powers of four;
+ *  - Radix2 for other powers of two;
+ *  - Bluestein (chirp-z) for primes above 64 and for composites with a prime
+ *    factor above 64;
+ *  - MixedRadix (recursive Cooley-Tukey over the prime factors) for other
+ *    composite lengths;
+ *  - DirectDFT for the remaining primes.
  * It can then execute transforms of its length any number of times. Execution does not modify
  * the plan, so a single plan may be shared by concurrent callers.
  *
@@ -79,8 +83,9 @@ public:
     /**
      * @brief Scratch elements that execute(..., Workspace&) needs for this plan.
      *
-     * Non-zero only for MixedRadix, where it equals size(). A Workspace of this
-     * capacity, reused across calls, makes execution allocation-free.
+     * Zero for the radix and direct paths. size() for MixedRadix, and twice the
+     * convolution length for Bluestein. A Workspace of this capacity, reused
+     * across calls, makes execution allocation-free.
      */
     [[nodiscard]] std::size_t workspace_size() const noexcept;
 

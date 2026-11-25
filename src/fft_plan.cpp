@@ -44,11 +44,15 @@ std::vector<std::size_t> prime_factors(std::size_t n) {
     return factors;
 }
 
+/// Lengths and prime factors above this use Bluestein instead of direct or mixed-radix steps.
+constexpr std::size_t kBluesteinThreshold = 64;
+
 /**
- * @brief Returns true if @p n is prime.
+ * @brief Length of the power-of-two convolution used by Bluestein for length n.
+ * @param n Transform length, greater than one.
  */
-bool is_prime(std::size_t n) {
-    return n >= 2 && prime_factors(n).size() == 1;
+std::size_t bluestein_convolution_length(std::size_t n) {
+    return std::bit_ceil(2 * n - 1);
 }
 
 /**
@@ -62,7 +66,16 @@ Algorithm select_algorithm(std::size_t n) {
         return Algorithm::Radix4;
     if (std::has_single_bit(n))
         return Algorithm::Radix2;
-    return is_prime(n) ? Algorithm::DirectDFT : Algorithm::MixedRadix;
+    if (n < 2)
+        return Algorithm::DirectDFT;  // n == 0 is rejected by the constructor.
+
+    // Large prime factors make the mixed-radix cost grow with the factor, so
+    // they are handled by Bluestein; small primes are cheaper done directly.
+    const auto factors = prime_factors(n);
+    if (factors.size() == 1)
+        return n > kBluesteinThreshold ? Algorithm::Bluestein : Algorithm::DirectDFT;
+    return factors.back() > kBluesteinThreshold ? Algorithm::Bluestein
+                                                : Algorithm::MixedRadix;
 }
 
 /**
@@ -226,6 +239,60 @@ void mixed_radix_rec(const std::vector<std::complex<double>>& twiddles,
 }
 
 /**
+ * @brief Bluestein (chirp-z) transform of length n = chirp.size().
+ *
+ * Uses nk = (n^2 + k^2 - (k-n)^2) / 2 to write the DFT as a convolution:
+ *   X_k = conj_chirp_k * sum_j (x_j * conj_chirp_j) * chirp_(k-j),
+ * with chirp_j = exp(i*pi*j^2/n) and the sign chosen for the forward DFT.
+ * The convolution is computed with length-m power-of-two FFTs, where @p kernel
+ * holds the forward transform of the zero-padded, wrapped chirp.
+ *
+ * The inverse transform uses IDFT(x) = conj(DFT(conj(x))), unscaled.
+ *
+ * @param chirp   exp(-i*pi*j^2/n) for j in [0, n).
+ * @param kernel  Forward transform of the wrapped exp(+i*pi*j^2/n), length m.
+ * @param inner   Plan of length m, unnormalized, power of two.
+ * @param in      Input, n elements, not aliased with @p out.
+ * @param out     Output, n elements, before scaling.
+ * @param scratch At least 2*m elements; not aliased with @p in or @p out.
+ * @param inverse True for the inverse transform.
+ */
+template<typename T>
+void bluestein_transform(const std::vector<std::complex<T>>& chirp,
+                         const std::vector<std::complex<T>>& kernel,
+                         const FFTPlan<T>& inner,
+                         const std::complex<T>* in, std::complex<T>* out,
+                         std::complex<T>* scratch, bool inverse) {
+    const std::size_t n = chirp.size();
+    const std::size_t m = kernel.size();
+    std::complex<T>* a = scratch;
+    std::complex<T>* c = scratch + m;
+
+    const T sign = inverse ? T(-1) : T(1);
+    for (std::size_t j = 0; j < n; ++j) {
+        const std::complex<T> x(in[j].real(), sign * in[j].imag());
+        a[j] = cmul(x, chirp[j]);
+    }
+    std::fill(a + n, a + m, std::complex<T>(T(0), T(0)));
+
+    inner.execute(Direction::Forward, a, c);
+    for (std::size_t k = 0; k < m; ++k)
+        c[k] = cmul(c[k], kernel[k]);
+
+    // Inverse FFT of c through conjugation: ifft(z) = conj(F(conj(z))) / m.
+    for (std::size_t k = 0; k < m; ++k)
+        c[k] = std::complex<T>(c[k].real(), -c[k].imag());
+    inner.execute(Direction::Forward, c, a);
+
+    const T inv_m = T(1) / static_cast<T>(m);
+    for (std::size_t k = 0; k < n; ++k) {
+        const std::complex<T> conv(a[k].real() * inv_m, -a[k].imag() * inv_m);
+        const std::complex<T> x = cmul(chirp[k], conv);
+        out[k] = inverse ? std::complex<T>(x.real(), -x.imag()) : x;
+    }
+}
+
+/**
  * @brief In-place iterative radix-2 decimation-in-time FFT (Cooley-Tukey).
  *
  * The stage twiddles are read from @p stage_tw, laid out as, for each stage
@@ -383,6 +450,34 @@ struct FFTPlan<T>::Impl {
                 }
                 break;
             case Algorithm::MixedRadix: factors = prime_factors(length); break;
+            case Algorithm::Bluestein: {
+                const std::size_t m = bluestein_convolution_length(length);
+                const std::uint64_t period = 2 * static_cast<std::uint64_t>(length);
+                // exp(+/- i*pi*j^2/n), with j^2 reduced modulo 2n to keep the angle small.
+                auto chirp_at = [&](std::size_t j, double sgn) {
+                    const std::uint64_t r = (static_cast<std::uint64_t>(j) * j) % period;
+                    const double angle = sgn * std::numbers::pi * static_cast<double>(r)
+                                       / static_cast<double>(length);
+                    return std::polar(1.0, angle);
+                };
+                chirp.reserve(length);
+                for (std::size_t j = 0; j < length; ++j) {
+                    const std::complex<double> c = chirp_at(j, -1.0);
+                    chirp.emplace_back(static_cast<T>(c.real()), static_cast<T>(c.imag()));
+                }
+                std::vector<std::complex<T>> wrapped(m, std::complex<T>(T(0), T(0)));
+                wrapped[0] = std::complex<T>(T(1), T(0));
+                for (std::size_t j = 1; j < length; ++j) {
+                    const std::complex<double> c = chirp_at(j, +1.0);
+                    const std::complex<T> v(static_cast<T>(c.real()), static_cast<T>(c.imag()));
+                    wrapped[j] = v;
+                    wrapped[m - j] = v;
+                }
+                inner = std::make_unique<FFTPlan<T>>(m, Normalization::None);
+                kernel.assign(m, std::complex<T>(T(0), T(0)));
+                inner->execute(Direction::Forward, wrapped.data(), kernel.data());
+                break;
+            }
             default: break;
         }
     }
@@ -394,6 +489,9 @@ struct FFTPlan<T>::Impl {
     SwapList swaps;
     std::vector<std::complex<T>> stage_tw;  // Radix2 and Radix4, see the kernels.
     std::vector<std::size_t> factors;       // MixedRadix only: prime factors of length.
+    std::vector<std::complex<T>> chirp;     // Bluestein only: exp(-i*pi*j^2/n).
+    std::vector<std::complex<T>> kernel;    // Bluestein only: forward transform of the wrapped chirp.
+    std::unique_ptr<FFTPlan<T>> inner;      // Bluestein only: power-of-two plan of length kernel.size().
 };
 
 template<typename T>
@@ -441,7 +539,13 @@ Algorithm FFTPlan<T>::algorithm() const noexcept {
 
 template<typename T>
 std::size_t FFTPlan<T>::workspace_size() const noexcept {
-    return impl_ && impl_->algorithm == Algorithm::MixedRadix ? impl_->length : 0;
+    if (!impl_)
+        return 0;
+    switch (impl_->algorithm) {
+        case Algorithm::MixedRadix: return impl_->length;
+        case Algorithm::Bluestein:  return 2 * impl_->kernel.size();
+        default:                    return 0;
+    }
 }
 
 template<typename T>
@@ -485,6 +589,14 @@ void FFTPlan<T>::execute(Direction direction,
             mixed_radix_rec(impl_->twiddles, impl_->factors, 0, in, 1, n, out,
                             workspace.data(), inverse);
             break;
+        case Algorithm::Bluestein: {
+            const std::size_t need = 2 * impl_->kernel.size();
+            if (workspace.capacity() < need)
+                workspace.resize(need);
+            bluestein_transform(impl_->chirp, impl_->kernel, *impl_->inner,
+                                in, out, workspace.data(), inverse);
+            break;
+        }
         default:
             direct_dft(impl_->twiddles, inverse, in, out);
             break;

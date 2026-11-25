@@ -387,6 +387,52 @@ static void test_workspace_reuse() {
 }
 
 /**
+ * @brief Verifies the Bluestein path: selection, accuracy against the reference
+ *        DFT in both precisions, round trip, and scratch sizing.
+ */
+static void test_bluestein() {
+    // Selection: large primes and composites with a large prime factor.
+    FFT_TEST_CHECK(fft::FFTPlan<double>(67).algorithm() == fft::Algorithm::Bluestein);
+    FFT_TEST_CHECK(fft::FFTPlan<double>(262).algorithm() == fft::Algorithm::Bluestein);  // 2 * 131
+    FFT_TEST_CHECK(fft::FFTPlan<double>(61).algorithm() == fft::Algorithm::DirectDFT);   // prime <= 64
+
+    // Scratch: two buffers of the power-of-two convolution length (127 -> 256).
+    FFT_TEST_CHECK(fft::FFTPlan<double>(127).workspace_size() == 512);
+
+    const std::size_t sizes[] = {67, 127, 131, 262, 257};
+    for (const std::size_t n : sizes) {
+        const auto x = make_input(n, static_cast<std::uint32_t>(n) * 977u + 3u);
+        const auto ref_fwd = reference_dft(x, -1);
+        const auto ref_inv = reference_dft(x, +1);
+
+        fft::FFTPlan<double> pd(n, fft::Normalization::None);
+        fft::FFTPlan<float> pf(n, fft::Normalization::None);
+
+        FFT_TEST_CHECK(max_abs_error(run_plan(pd, fft::Direction::Forward, x), ref_fwd) < 1e-10 * static_cast<double>(n));
+        FFT_TEST_CHECK(max_abs_error(run_plan(pd, fft::Direction::Inverse, x), ref_inv) < 1e-10 * static_cast<double>(n));
+        FFT_TEST_CHECK(max_abs_error(run_plan(pf, fft::Direction::Forward, x), ref_fwd) < 1e-3 * static_cast<double>(n));
+        FFT_TEST_CHECK(max_abs_error(run_plan(pf, fft::Direction::Inverse, x), ref_inv) < 1e-3 * static_cast<double>(n));
+
+        fft::FFTPlan<double> plan(n);
+        const auto y = run_plan(plan, fft::Direction::Inverse,
+                                run_plan(plan, fft::Direction::Forward, x));
+        for (std::size_t i = 0; i < n; ++i)
+            FFT_TEST_CHECK(std::abs(y[i] - x[i]) < 1e-11);
+    }
+
+    // Workspace path gives the same bits as the allocating overload.
+    const std::size_t n = 262;
+    const auto x = make_input(n, 4321u);
+    fft::FFTPlan<double> plan(n);
+    fft::Workspace<double> ws(plan.workspace_size());
+    std::vector<std::complex<double>> a(n), b(n);
+    plan.execute(fft::Direction::Forward, x.data(), a.data(), ws);
+    plan.execute(fft::Direction::Forward, x.data(), b.data());
+    for (std::size_t i = 0; i < n; ++i)
+        FFT_TEST_CHECK(a[i] == b[i]);
+}
+
+/**
  * @brief Verifies that impulses and constants give the known spectra.
  */
 static void test_known_spectra() {
@@ -569,6 +615,7 @@ int main() {
     test_radix_kernels();
     test_mixed_radix();
     test_workspace_reuse();
+    test_bluestein();
     test_plan_metadata();
     test_invalid_sizes();
     test_shape_overflow();
