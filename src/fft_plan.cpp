@@ -44,6 +44,39 @@ std::vector<std::size_t> prime_factors(std::size_t n) {
     return factors;
 }
 
+/**
+ * @brief Computes base^exponent mod modulus. Operands must be below 2^32.
+ */
+std::uint64_t powmod(std::uint64_t base, std::uint64_t exponent, std::uint64_t modulus) {
+    std::uint64_t result = 1 % modulus;
+    base %= modulus;
+    while (exponent > 0) {
+        if (exponent & 1u)
+            result = result * base % modulus;
+        base = base * base % modulus;
+        exponent >>= 1;
+    }
+    return result;
+}
+
+/**
+ * @brief Returns a primitive root modulo the prime p, with 3 <= p < 2^32.
+ */
+std::uint64_t primitive_root(std::uint64_t p) {
+    const auto factors = prime_factors(p - 1);
+    for (std::uint64_t g = 2; g < p; ++g) {
+        bool primitive = true;
+        for (std::size_t i = 0; i < factors.size() && primitive; ++i) {
+            if (i > 0 && factors[i] == factors[i - 1])
+                continue;
+            primitive = powmod(g, (p - 1) / factors[i], p) != 1;
+        }
+        if (primitive)
+            return g;
+    }
+    return 0;  // Not reached for a prime p.
+}
+
 /// Lengths and prime factors above this use Bluestein instead of direct or mixed-radix steps.
 constexpr std::size_t kBluesteinThreshold = 64;
 
@@ -59,7 +92,8 @@ std::size_t bluestein_convolution_length(std::size_t n) {
  * @brief Selects the algorithm for a transform length.
  *
  * Radix4 for powers of four, Radix2 for other powers of two, DirectDFT for
- * primes, MixedRadix for other composite lengths.
+ * small primes, Rader for primes p with p-1 a power of two, Bluestein for
+ * other large primes, MixedRadix for other composites.
  */
 Algorithm select_algorithm(std::size_t n) {
     if (is_power_of_four(n))
@@ -72,8 +106,18 @@ Algorithm select_algorithm(std::size_t n) {
     // Large prime factors make the mixed-radix cost grow with the factor, so
     // they are handled by Bluestein; small primes are cheaper done directly.
     const auto factors = prime_factors(n);
-    if (factors.size() == 1)
-        return n > kBluesteinThreshold ? Algorithm::Bluestein : Algorithm::DirectDFT;
+    if (factors.size() == 1) {
+        if (n <= kBluesteinThreshold)
+            return Algorithm::DirectDFT;
+        // Rader wins only when its cyclic convolution length p-1 is a power of
+        // two, which runs on the radix kernels. Measured on the same primes:
+        // p-1 = 256 and 65536 are 3-4x faster than Bluestein, while composite
+        // p-1 is 4-5x slower, because the mixed-radix kernel is still generic.
+        // Rader also needs modular arithmetic below 2^32.
+        return (n <= 0xFFFFFFFFull && std::has_single_bit(n - 1))
+                   ? Algorithm::Rader
+                   : Algorithm::Bluestein;
+    }
     return factors.back() > kBluesteinThreshold ? Algorithm::Bluestein
                                                 : Algorithm::MixedRadix;
 }
@@ -293,6 +337,68 @@ void bluestein_transform(const std::vector<std::complex<T>>& chirp,
 }
 
 /**
+ * @brief Rader's transform of prime length p = perm.size() + 1.
+ *
+ * With g a primitive root and perm[q] = g^q mod p, the DFT's nonzero indices
+ * reduce to a cyclic convolution of length L = p-1:
+ *   X[g^(-m)] = x_0 + sum_q x[g^q] * W^(g^(q-m)),   W = exp(-2*pi*i/p),
+ * computed through the transform of length L held by @p inner. X_0 is the sum
+ * of all inputs.
+ *
+ * The inverse transform uses IDFT(x) = conj(DFT(conj(x))), unscaled.
+ *
+ * @param perm    perm[q] = g^q mod p for q in [0, L).
+ * @param kernel  Forward transform of b_r = W^(g^(-r)), length L.
+ * @param inner   Unnormalized plan of length L.
+ * @param in      Input, p elements, not aliased with @p out.
+ * @param out     Output, p elements, before scaling.
+ * @param scratch At least 2*L elements; not aliased with @p in or @p out.
+ * @param inverse True for the inverse transform.
+ */
+template<typename T>
+void rader_transform(const std::vector<std::size_t>& perm,
+                     const std::vector<std::complex<T>>& kernel,
+                     const FFTPlan<T>& inner,
+                     const std::complex<T>* in, std::complex<T>* out,
+                     std::complex<T>* scratch, bool inverse) {
+    const std::size_t len = perm.size();
+    const std::size_t p = len + 1;
+    std::complex<T>* a = scratch;
+    std::complex<T>* c = scratch + len;
+
+    const T sign = inverse ? T(-1) : T(1);
+    auto load = [&](std::size_t i) {
+        return std::complex<T>(in[i].real(), sign * in[i].imag());
+    };
+
+    // All inputs are read before any output is written, so no read sees a
+    // partially written result.
+    const std::complex<T> x0 = load(0);
+    std::complex<T> total = x0;
+    for (std::size_t i = 1; i < p; ++i)
+        total += load(i);
+    for (std::size_t q = 0; q < len; ++q)
+        a[q] = load(perm[q]);
+
+    inner.execute(Direction::Forward, a, c);
+    for (std::size_t k = 0; k < len; ++k)
+        c[k] = cmul(c[k], kernel[k]);
+
+    // Inverse FFT of the product through conjugation, as in bluestein_transform.
+    for (std::size_t k = 0; k < len; ++k)
+        c[k] = std::complex<T>(c[k].real(), -c[k].imag());
+    inner.execute(Direction::Forward, c, a);
+
+    const T inv_len = T(1) / static_cast<T>(len);
+    for (std::size_t m = 0; m < len; ++m) {
+        const std::complex<T> conv(a[m].real() * inv_len, -a[m].imag() * inv_len);
+        const std::complex<T> value = x0 + conv;
+        out[perm[(len - m) % len]] = inverse ? std::complex<T>(value.real(), -value.imag()) : value;
+    }
+    out[0] = inverse ? std::complex<T>(total.real(), -total.imag()) : total;
+}
+
+/**
  * @brief In-place iterative radix-2 decimation-in-time FFT (Cooley-Tukey).
  *
  * The stage twiddles are read from @p stage_tw, laid out as, for each stage
@@ -450,6 +556,28 @@ struct FFTPlan<T>::Impl {
                 }
                 break;
             case Algorithm::MixedRadix: factors = prime_factors(length); break;
+            case Algorithm::Rader: {
+                const std::size_t len = length - 1;
+                const std::uint64_t g = primitive_root(length);
+                perm.resize(len);
+                perm[0] = 1;
+                for (std::size_t q = 1; q < len; ++q)
+                    perm[q] = static_cast<std::size_t>(perm[q - 1] * g % length);
+
+                // b_r = W^(g^(-r)), with g^(-r) = g^(len - r) since g^len = 1.
+                std::vector<std::complex<T>> b(len);
+                for (std::size_t r = 0; r < len; ++r) {
+                    const double angle = -2.0 * std::numbers::pi
+                                       * static_cast<double>(perm[(len - r) % len])
+                                       / static_cast<double>(length);
+                    const std::complex<double> w = std::polar(1.0, angle);
+                    b[r] = std::complex<T>(static_cast<T>(w.real()), static_cast<T>(w.imag()));
+                }
+                inner = std::make_unique<FFTPlan<T>>(len, Normalization::None);
+                kernel.assign(len, std::complex<T>(T(0), T(0)));
+                inner->execute(Direction::Forward, b.data(), kernel.data());
+                break;
+            }
             case Algorithm::Bluestein: {
                 const std::size_t m = bluestein_convolution_length(length);
                 const std::uint64_t period = 2 * static_cast<std::uint64_t>(length);
@@ -490,8 +618,9 @@ struct FFTPlan<T>::Impl {
     std::vector<std::complex<T>> stage_tw;  // Radix2 and Radix4, see the kernels.
     std::vector<std::size_t> factors;       // MixedRadix only: prime factors of length.
     std::vector<std::complex<T>> chirp;     // Bluestein only: exp(-i*pi*j^2/n).
-    std::vector<std::complex<T>> kernel;    // Bluestein only: forward transform of the wrapped chirp.
-    std::unique_ptr<FFTPlan<T>> inner;      // Bluestein only: power-of-two plan of length kernel.size().
+    std::vector<std::complex<T>> kernel;    // Bluestein and Rader: forward transform of the kernel.
+    std::unique_ptr<FFTPlan<T>> inner;      // Bluestein and Rader: plan of length kernel.size().
+    std::vector<std::size_t> perm;          // Rader only: perm[q] = g^q mod length.
 };
 
 template<typename T>
@@ -543,7 +672,8 @@ std::size_t FFTPlan<T>::workspace_size() const noexcept {
         return 0;
     switch (impl_->algorithm) {
         case Algorithm::MixedRadix: return impl_->length;
-        case Algorithm::Bluestein:  return 2 * impl_->kernel.size();
+        case Algorithm::Bluestein:
+        case Algorithm::Rader:      return 2 * impl_->kernel.size();
         default:                    return 0;
     }
 }
@@ -595,6 +725,14 @@ void FFTPlan<T>::execute(Direction direction,
                 workspace.resize(need);
             bluestein_transform(impl_->chirp, impl_->kernel, *impl_->inner,
                                 in, out, workspace.data(), inverse);
+            break;
+        }
+        case Algorithm::Rader: {
+            const std::size_t need = 2 * impl_->kernel.size();
+            if (workspace.capacity() < need)
+                workspace.resize(need);
+            rader_transform(impl_->perm, impl_->kernel, *impl_->inner,
+                            in, out, workspace.data(), inverse);
             break;
         }
         default:

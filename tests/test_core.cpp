@@ -388,18 +388,20 @@ static void test_workspace_reuse() {
 
 /**
  * @brief Verifies the Bluestein path: selection, accuracy against the reference
- *        DFT in both precisions, round trip, and scratch sizing.
+ *        DFT in both precisions, round trip, scratch sizing, and agreement of the
+ *        workspace path with the allocating path.
  */
 static void test_bluestein() {
-    // Selection: large primes and composites with a large prime factor.
-    FFT_TEST_CHECK(fft::FFTPlan<double>(67).algorithm() == fft::Algorithm::Bluestein);
+    // Selection: composites with a large prime factor, and primes with p-1 not a power of two.
     FFT_TEST_CHECK(fft::FFTPlan<double>(262).algorithm() == fft::Algorithm::Bluestein);  // 2 * 131
+    FFT_TEST_CHECK(fft::FFTPlan<double>(317).algorithm() == fft::Algorithm::Bluestein);  // 316 = 4 * 79
+    FFT_TEST_CHECK(fft::FFTPlan<double>(67).algorithm() == fft::Algorithm::Bluestein);   // 66 is not a power of two
     FFT_TEST_CHECK(fft::FFTPlan<double>(61).algorithm() == fft::Algorithm::DirectDFT);   // prime <= 64
 
-    // Scratch: two buffers of the power-of-two convolution length (127 -> 256).
-    FFT_TEST_CHECK(fft::FFTPlan<double>(127).workspace_size() == 512);
+    // Scratch: two buffers of the power-of-two convolution length (317 -> 1024).
+    FFT_TEST_CHECK(fft::FFTPlan<double>(317).workspace_size() == 2048);
 
-    const std::size_t sizes[] = {67, 127, 131, 262, 257};
+    const std::size_t sizes[] = {67, 127, 131, 262, 317};
     for (const std::size_t n : sizes) {
         const auto x = make_input(n, static_cast<std::uint32_t>(n) * 977u + 3u);
         const auto ref_fwd = reference_dft(x, -1);
@@ -428,6 +430,92 @@ static void test_bluestein() {
     std::vector<std::complex<double>> a(n), b(n);
     plan.execute(fft::Direction::Forward, x.data(), a.data(), ws);
     plan.execute(fft::Direction::Forward, x.data(), b.data());
+    for (std::size_t i = 0; i < n; ++i)
+        FFT_TEST_CHECK(a[i] == b[i]);
+}
+
+/**
+ * @brief Checks selected output bins against an O(N) long double sum.
+ *
+ * Used where a full reference DFT is too expensive (large N). Each bin k
+ * is compared with sum_j x_j * exp(-2*pi*i*k*j/N) in long double.
+ */
+static void check_sampled_bins(const std::vector<std::complex<double>>& x,
+                               const std::vector<std::complex<double>>& X,
+                               const std::vector<std::size_t>& bins, double tol) {
+    const std::size_t n = x.size();
+    const long double pi = std::numbers::pi_v<long double>;
+    for (const std::size_t k : bins) {
+        std::complex<long double> acc{0.0L, 0.0L};
+        for (std::size_t j = 0; j < n; ++j) {
+            const long double ang = -2.0L * pi * static_cast<long double>((k * j) % n) / static_cast<long double>(n);
+            acc += std::complex<long double>(x[j].real(), x[j].imag()) *
+                   std::complex<long double>(std::cos(ang), std::sin(ang));
+        }
+        const std::complex<long double> got(X[k].real(), X[k].imag());
+        FFT_TEST_CHECK(std::abs(got - acc) < tol * static_cast<double>(n));
+    }
+}
+
+/**
+ * @brief Verifies Rader's path on primes with p-1 a power of two: selection,
+ *        accuracy, round trip, scratch sizing, and workspace agreement.
+ */
+static void test_rader() {
+    FFT_TEST_CHECK(fft::FFTPlan<double>(257).algorithm() == fft::Algorithm::Rader);    // 256 = 2^8
+    FFT_TEST_CHECK(fft::FFTPlan<double>(65537).algorithm() == fft::Algorithm::Rader);  // 65536 = 2^16
+    FFT_TEST_CHECK(fft::FFTPlan<double>(1009).algorithm() == fft::Algorithm::Bluestein); // 1008 is not a power of two
+
+    // Scratch: two buffers of p-1 elements.
+    FFT_TEST_CHECK(fft::FFTPlan<double>(257).workspace_size() == 512);
+
+    // Full reference comparison at 257.
+    {
+        const std::size_t n = 257;
+        const auto x = make_input(n, 613u);
+        fft::FFTPlan<double> pd(n, fft::Normalization::None);
+        fft::FFTPlan<float> pf(n, fft::Normalization::None);
+        FFT_TEST_CHECK(max_abs_error(run_plan(pd, fft::Direction::Forward, x), reference_dft(x, -1)) < 1e-10 * static_cast<double>(n));
+        FFT_TEST_CHECK(max_abs_error(run_plan(pd, fft::Direction::Inverse, x), reference_dft(x, +1)) < 1e-10 * static_cast<double>(n));
+        FFT_TEST_CHECK(max_abs_error(run_plan(pf, fft::Direction::Forward, x), reference_dft(x, -1)) < 1e-3 * static_cast<double>(n));
+
+        fft::FFTPlan<double> plan(n);
+        const auto y = run_plan(plan, fft::Direction::Inverse, run_plan(plan, fft::Direction::Forward, x));
+        for (std::size_t i = 0; i < n; ++i)
+            FFT_TEST_CHECK(std::abs(y[i] - x[i]) < 1e-11);
+    }
+
+    // 65537 is too large for the full reference: sample bins, check round trip and energy.
+    {
+        const std::size_t n = 65537;
+        const auto x = make_input(n, 2024u);
+        fft::FFTPlan<double> plan(n, fft::Normalization::None);
+        const auto X = run_plan(plan, fft::Direction::Forward, x);
+        check_sampled_bins(x, X, {0, 1, 2, 12345, 65536}, 1e-10);
+
+        fft::FFTPlan<double> ortho(n, fft::Normalization::Ortho);
+        const auto Xo = run_plan(ortho, fft::Direction::Forward, x);
+        double ex = 0.0, eX = 0.0;
+        for (std::size_t i = 0; i < n; ++i) {
+            ex += std::norm(x[i]);
+            eX += std::norm(Xo[i]);
+        }
+        FFT_TEST_CHECK(std::abs(ex - eX) < 1e-7 * ex);
+
+        fft::FFTPlan<double> inv(n);
+        const auto y = run_plan(inv, fft::Direction::Inverse, run_plan(inv, fft::Direction::Forward, x));
+        for (std::size_t i = 0; i < n; i += 97)
+            FFT_TEST_CHECK(std::abs(y[i] - x[i]) < 1e-11);
+    }
+
+    // Workspace path agrees with the allocating path.
+    const std::size_t n = 257;
+    const auto x = make_input(n, 77u);
+    fft::FFTPlan<double> plan(n);
+    fft::Workspace<double> ws(plan.workspace_size());
+    std::vector<std::complex<double>> a(n), b(n);
+    plan.execute(fft::Direction::Inverse, x.data(), a.data(), ws);
+    plan.execute(fft::Direction::Inverse, x.data(), b.data());
     for (std::size_t i = 0; i < n; ++i)
         FFT_TEST_CHECK(a[i] == b[i]);
 }
@@ -616,6 +704,7 @@ int main() {
     test_mixed_radix();
     test_workspace_reuse();
     test_bluestein();
+    test_rader();
     test_plan_metadata();
     test_invalid_sizes();
     test_shape_overflow();

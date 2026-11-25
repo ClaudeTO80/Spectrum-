@@ -18,8 +18,9 @@ namespace fft {
  * The plan selects an algorithm at construction time:
  *  - Radix4 (iterative Cooley-Tukey) for powers of four;
  *  - Radix2 for other powers of two;
- *  - Bluestein (chirp-z) for primes above 64 and for composites with a prime
- *    factor above 64;
+ *  - Rader for primes p above 64 with p-1 a power of two, below 2^32;
+ *  - Bluestein (chirp-z) for other primes above 64 and for composites with a
+ *    prime factor above 64;
  *  - MixedRadix (recursive Cooley-Tukey over the prime factors) for other
  *    composite lengths;
  *  - DirectDFT for the remaining primes.

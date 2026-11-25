@@ -10,7 +10,7 @@ to accommodate future 2D and 3D transforms.
 
 The current code provides the initial compiled-library layout, public types,
 dimension descriptors, workspace storage, plan metadata, CMake installation and
-a basic test/CI setup. The direct DFT, radix-2, radix-4, mixed-radix and Bluestein complex FFTs (float and double) are implemented; Rader is not yet.
+a basic test/CI setup. The direct DFT, radix-2, radix-4, mixed-radix, Bluestein and Rader complex FFTs (float and double) are implemented.
 
 ## Usage
 
@@ -39,7 +39,7 @@ plan.execute(fft::Direction::Forward, in.data(), out.data());
 
 Normalization options: `None`, `Forward`, `Inverse` (default), `Ortho`.
 Input and output buffers must not overlap (in-place is not supported yet).
-The planner uses radix-4 for powers of four, radix-2 for other powers of two, Bluestein (chirp-z) for primes above 64 and for composites with a prime factor above 64, mixed-radix for other composite lengths, and a direct DFT for the remaining primes. Mixed-radix and Bluestein execution need scratch memory (`plan.workspace_size()`): pass a
+The planner uses radix-4 for powers of four, radix-2 for other powers of two, Rader for primes p with p-1 a power of two, Bluestein (chirp-z) for other primes above 64 and for composites with a prime factor above 64, mixed-radix for other composite lengths, and a direct DFT for the remaining primes. Mixed-radix and Bluestein execution need scratch memory (`plan.workspace_size()`): pass a
 `fft::Workspace` to reuse it across calls, or let the plan allocate one per call.
 A plan is immutable and can be shared across threads that use their own buffers.
 `fft::Workspace` is provided for caller-owned scratch memory, but no transform
