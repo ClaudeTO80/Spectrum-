@@ -1305,6 +1305,10 @@ int main() {
     test_nd_reference(std::array<std::size_t, 3>{4, 5, 3});
     test_nd_reference(std::array<std::size_t, 3>{6, 1, 4});
     test_nd_reference(std::array<std::size_t, 3>{3, 3, 3});
+    // Inner extents that are not multiples of the line block (8): partial blocks.
+    test_nd_reference(std::array<std::size_t, 2>{9, 13});
+    test_nd_reference(std::array<std::size_t, 3>{5, 3, 11});
+    test_nd_reference(std::array<std::size_t, 3>{2, 9, 17});
     test_nd_round_trip_and_parseval();
     test_nd_known_spectra();
     test_nd_paths_and_rank1();

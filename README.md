@@ -124,10 +124,10 @@ int main() {
 ```
 
 The simple API provides `forward_2d`, `inverse_2d`, `forward_3d` and `inverse_3d`.
-Measured (double, shared VM): a 2D transform costs 1.1 to 1.4 times a 1D transform of
-the same size, and a 3D 64x64x64 transform takes about 21 ns per element. The line
-gather is strided, which accounts for the difference; blocking several lines per
-pass is the obvious next step and is not implemented.
+Measured (double, shared 2-core VM, five alternating runs): a 2D 1024x1024 transform
+takes 16 to 22 ns per element with the blocked line gather (8 adjacent strided lines
+per pass), against 24 to 32 ns per element for the one-line-at-a-time gather. For 3D
+64x64x64 the difference is within the noise (about 15 ns per element in both versions).
 
 ### Real transforms
 

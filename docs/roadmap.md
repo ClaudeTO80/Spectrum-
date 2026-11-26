@@ -69,7 +69,8 @@ Status as of 0.1.0.
    std::thread creates threads on each call. Not added to the library, since the core
    stays C++20.
 9. 2D and 3D extensions: **done** (`FFTPlanND<T, Rank>`, separable, one 1D plan per
-   axis; simple API `forward_2d`, `inverse_2d`, `forward_3d`, `inverse_3d`). Measured
-   on this VM: a 2D transform costs 1.1-1.4 times a 1D transform of the same size; 3D
-   64x64x64 takes about 21 ns per element. Blocked line gathers are a possible next
-   step, not implemented.
+   axis; simple API `forward_2d`, `inverse_2d`, `forward_3d`, `inverse_3d`). Strided
+   axes gather 8 adjacent lines per pass (`kLineBlock`). On this VM, 2D 1024x1024 takes
+   16-22 ns per element with blocking against 24-32 without (five alternating runs,
+   faster in every pair). 3D 64x64x64 shows no reliable difference (about 15 ns per
+   element in both). Block size and the 3D case are not tuned further.

@@ -77,7 +77,8 @@ public:
     /**
      * @brief Scratch elements that the workspace overloads need.
      *
-     * Two line buffers of the longest extent, plus the largest per-axis scratch.
+     * Two blocks of line buffers, each of kLineBlock lines of the longest extent,
+     * plus the largest per-axis scratch.
      */
     [[nodiscard]] std::size_t workspace_size() const noexcept;
 

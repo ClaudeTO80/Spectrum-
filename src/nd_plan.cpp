@@ -25,6 +25,13 @@
 namespace fft {
 
 /**
+ * @brief Number of adjacent lines transformed together along a strided axis.
+ *
+ * Eight complex values fill one 128-byte run, two cache lines on common hardware.
+ */
+inline constexpr std::size_t kLineBlock = 8;
+
+/**
  * @brief Internal state of FFTPlanND. Member order matches the constructor.
  */
 template<typename T, std::size_t Rank>
@@ -93,7 +100,7 @@ template<typename T, std::size_t Rank>
 std::size_t FFTPlanND<T, Rank>::workspace_size() const noexcept {
     if (!impl_)
         return 0;
-    return 2 * impl_->max_extent + impl_->max_axis_workspace;
+    return 2 * kLineBlock * impl_->max_extent + impl_->max_axis_workspace;
 }
 
 template<typename T, std::size_t Rank>
@@ -139,10 +146,11 @@ void FFTPlanND<T, Rank>::execute_inplace(Direction direction,
     const std::size_t need = workspace_size();
     if (workspace.capacity() < need)
         workspace.resize(need);
+    const std::size_t block_span = kLineBlock * p.max_extent;
     std::complex<T>* line_in = workspace.data();
-    std::complex<T>* line_out = line_in + p.max_extent;
-    std::complex<T>* scratch = line_out + p.max_extent;
-    const std::size_t scratch_size = need - 2 * p.max_extent;
+    std::complex<T>* line_out = line_in + block_span;
+    std::complex<T>* scratch = line_out + block_span;
+    const std::size_t scratch_size = need - 2 * block_span;
 
     const auto& dims = p.shape.dimensions();
     for (std::size_t a = 0; a < Rank; ++a) {
@@ -155,14 +163,25 @@ void FFTPlanND<T, Rank>::execute_inplace(Direction direction,
             outer *= dims[b];
 
         const FFTPlan<T>& plan = p.axis_plans[a];
+        // Lines that are adjacent in memory (consecutive inner positions) are gathered
+        // together, so each row of the grid is read and written as a contiguous run.
         for (std::size_t o = 0; o < outer; ++o) {
-            for (std::size_t i = 0; i < inner; ++i) {
-                const std::size_t base = o * len * inner + i;
-                for (std::size_t j = 0; j < len; ++j)
-                    line_in[j] = data[base + j * inner];
-                plan.execute(direction, line_in, line_out, scratch, scratch_size);
-                for (std::size_t j = 0; j < len; ++j)
-                    data[base + j * inner] = line_out[j];
+            for (std::size_t i0 = 0; i0 < inner; i0 += kLineBlock) {
+                const std::size_t count = std::min(kLineBlock, inner - i0);
+                const std::size_t base = o * len * inner + i0;
+                for (std::size_t j = 0; j < len; ++j) {
+                    const std::complex<T>* row = data + base + j * inner;
+                    for (std::size_t b = 0; b < count; ++b)
+                        line_in[b * p.max_extent + j] = row[b];
+                }
+                for (std::size_t b = 0; b < count; ++b)
+                    plan.execute(direction, line_in + b * p.max_extent,
+                                 line_out + b * p.max_extent, scratch, scratch_size);
+                for (std::size_t j = 0; j < len; ++j) {
+                    std::complex<T>* row = data + base + j * inner;
+                    for (std::size_t b = 0; b < count; ++b)
+                        row[b] = line_out[b * p.max_extent + j];
+                }
             }
         }
     }
