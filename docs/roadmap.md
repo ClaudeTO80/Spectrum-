@@ -6,8 +6,10 @@ Status as of 0.1.0.
 2. Direct DFT, radix-2 and radix-4 complex FFT: **done**
 3. Mixed-radix: **done** (recursive, table-driven)
 4. Bluestein: **done** (chirp-z, power-of-two convolution)
-5. Rader: **done** for primes with p-1 a power of two; composite p-1 is measured
-   slower than Bluestein and is not selected
+5. Rader: **done** for primes with p-1 a power of two. Composite p-1 was measured
+   again after the symmetric odd-factor butterfly (double, forward, shared VM):
+   Rader is correct (error about 1e-13) but 1.2 to 1.6 times slower than Bluestein
+   for p from 67 to 4001, so the selection rule is unchanged
 6. Real-to-complex and complex-to-real FFT: **done** (`RealFFTPlan`, packed
    N/2-point transform for even N, full-length complex transform for odd N)
 7. SIMD and performance work: **in progress**.
