@@ -31,9 +31,15 @@ Status as of 0.1.0.
      Measured, double precision, forward, shared VM: 243 from 43 to 17 ns per
      element; 125 from 36 to 11; 625 from 46 to 13; 3125 from 57 to 16. Power-of-two
      lengths are unchanged. The generic length-p loop remains for other factors.
+   - Done: symmetric butterfly for every odd factor (pairs a_j +/- a_(p-j)), about
+     p(p-1) real products instead of 4p^2. Measured, double precision, forward,
+     shared VM: 343 from 46 to 20 ns per element; 121 from 46 to 18; 2401 from 60 to
+     27; 2197 from 79 to 27; 4004 from 75 to 34. Power-of-two lengths are unchanged.
+     A first version with per-call tables was slower (zeroing local arrays per
+     recursion node dominated); removing them was necessary.
    - Pending: SIMD kernels (not started; a portable version needs per-ISA code
-     paths and an MSVC build, so it is a separate decision), faster mixed-radix
-     passes for factors above 5 and for the data movement between passes so Rader
-     can cover composite p-1, and per-stage tables for the direct DFT
+     paths and an MSVC build, so it is a separate decision), data movement between
+     mixed-radix passes, which is not yet measured separately, so Rader can cover
+     composite p-1, and per-stage tables for the direct DFT
 8. Batch execution and parallelism: pending
 9. 2D and 3D extensions: pending

@@ -268,6 +268,56 @@ void butterfly5_pass(const std::complex<T>* tmp, std::size_t m,
 }
 
 /**
+ * @brief Length-p DFT for odd prime p, using the symmetry X[q] and X[p-q].
+ *
+ * With t_j = a_j + a_{p-j} and d_j = a_j - a_{p-j} for j = 1..(p-1)/2, and
+ * W^(jq) = Re + i*Im as the oriented table entries:
+ *   P_q = a_0 + sum_j t_j * Re(W^(jq)),   Q_q = sum_j d_j * Im(W^(jq)),
+ *   X_q = P_q + i*Q_q,                    X_(p-q) = P_q - i*Q_q.
+ * This takes about p*(p-1) real products, against 4*p^2 for the generic loop.
+ *
+ * @param tmp  Twiddled rows, tmp[r*m + k] for r < p.
+ * @param p    Odd factor of the transform length.
+ * @param tp   Table of W_p^j for j < p, un-oriented, as in mixed_radix_rec.
+ * @param out  Output, out[k + m*q] for q < p.
+ */
+template<typename T>
+void butterfly_odd_pass(const std::complex<T>* tmp, std::size_t m, std::size_t p,
+                        const std::complex<T>* tp, bool inverse, std::complex<T>* out) {
+    const std::size_t h = (p - 1) / 2;
+    const T sign = inverse ? T(-1) : T(1);
+    // No per-call tables: the call count grows with the number of recursion nodes,
+    // so per-call zero-initialization of local arrays dominates for small m.
+    for (std::size_t k = 0; k < m; ++k) {
+        const std::complex<T> a0 = tmp[k];
+        std::complex<T> sum = a0;
+        for (std::size_t j = 1; j <= h; ++j)
+            sum += tmp[j * m + k] + tmp[(p - j) * m + k];
+        out[k] = sum;
+
+        for (std::size_t q = 1; q <= h; ++q) {
+            std::complex<T> P = a0;
+            std::complex<T> Q{T(0), T(0)};
+            std::size_t idx = 0;  // (j*q) mod p, updated incrementally
+            for (std::size_t j = 1; j <= h; ++j) {
+                idx += q;
+                if (idx >= p)
+                    idx -= p;
+                const std::complex<T> w{tp[idx].real(), sign * tp[idx].imag()};
+                const std::complex<T> t = tmp[j * m + k] + tmp[(p - j) * m + k];
+                const std::complex<T> d = tmp[j * m + k] - tmp[(p - j) * m + k];
+                P += t * w.real();
+                Q += d * w.imag();
+            }
+            // i * Q with i * (x + iy) = -y + ix.
+            const std::complex<T> iQ{-Q.imag(), Q.real()};
+            out[k + m * q] = P + iQ;
+            out[k + m * (p - q)] = P - iQ;
+        }
+    }
+}
+
+/**
  * @brief Recursive decimation-in-time mixed-radix transform of length n.
  *
  * Splits the length-n transform on the prime factor p = factors[level] into p
@@ -330,6 +380,10 @@ void mixed_radix_rec(const std::complex<T>* tables,
     }
     if (p == 5) {
         butterfly5_pass(tmp, m, out, inverse);
+        return;
+    }
+    if (p % 2 == 1) {
+        butterfly_odd_pass(tmp, m, p, tp, inverse, out);
         return;
     }
     // Generic length-p DFT. The exponent r*q mod p is updated incrementally,

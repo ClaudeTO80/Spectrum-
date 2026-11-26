@@ -285,7 +285,10 @@ static void test_radix_kernels() {
  */
 static void test_mixed_radix() {
     // 125, 243 and 625 exercise the radix-3 and radix-5 butterflies at several levels.
-    const std::size_t sizes[] = {3, 5, 6, 9, 12, 15, 20, 30, 45, 49, 60, 100, 125, 210, 243, 360, 625};
+    // 74 and 122 use the odd-factor butterfly for 37 and 61; 121, 343 and 1001
+    // use it for 11, 7, 7*11*13 and mix it with the closed-form factors.
+    const std::size_t sizes[] = {3, 5, 6, 9, 12, 15, 20, 30, 45, 49, 60, 74, 100, 121, 122,
+                                 125, 210, 243, 343, 360, 625, 1001};
     for (const std::size_t n : sizes) {
         // 3 and 5 are prime and use the direct DFT; the rest are composite.
         const bool prime = (n == 3 || n == 5);
