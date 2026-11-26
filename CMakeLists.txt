@@ -29,6 +29,7 @@ set(FFT_PUBLIC_HEADERS
     include/fft/real_plan.hpp
     include/fft/nd_plan.hpp
     include/fft/simple.hpp
+    include/fft/filter.hpp
 )
 
 set(FFT_SOURCES

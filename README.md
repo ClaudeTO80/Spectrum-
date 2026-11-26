@@ -169,6 +169,40 @@ costs about half of a complex transform of length N. For odd N it runs a full-le
 complex transform. The imaginary parts of the DC and Nyquist bins are ignored by
 the inverse.
 
+### Filtering
+
+`Spectrum::filter_real` cleans a real signal in the frequency domain: forward transform,
+spectral mask, inverse transform. Cutoffs are given in the same unit as the sample rate
+(for example Hz). Bin `k` corresponds to frequency `k * fs / N`.
+
+```cpp
+#include <fft/fft.hpp>
+
+#include <cmath>
+#include <numbers>
+#include <vector>
+
+int main() {
+    constexpr double fs = 1000.0;
+    std::vector<double> noisy(1000);
+    for (std::size_t i = 0; i < noisy.size(); ++i) {
+        const double t = static_cast<double>(i) / fs;
+        noisy[i] = std::sin(2 * std::numbers::pi * 50 * t)    // wanted 50 Hz tone
+                 + 0.3 * std::sin(2 * std::numbers::pi * 400 * t); // 400 Hz interference
+    }
+    // Keep f <= 100 Hz: removes the 400 Hz interference.
+    auto clean = Spectrum::filter_real(noisy, fs, Spectrum::FilterType::LowPass, 100.0);
+}
+```
+
+The mask types are `LowPass` (keeps `f <= cutoff_low`), `HighPass` (keeps `f > cutoff_low`),
+`BandPass` (keeps `cutoff_low <= f <= cutoff_high`) and `BandStop` (its complement).
+A low-pass and a high-pass with the same cutoff sum to the input.
+
+The mask is brick-wall, so a sinusoid that does not complete an integer number of cycles
+over the record leaks into neighbouring bins, and sharp cutoffs produce ringing. A tone
+with an integer number of cycles over the record is separated exactly.
+
 ### Workspace
 
 `plan.workspace_size()` reports the scratch elements that `execute()` needs:
