@@ -52,4 +52,11 @@ Status as of 0.1.0.
 8. Batch execution and parallelism: **done** for a fixed length: `execute_batch` (sequential,
    reusing a workspace) and the threaded overload (blocks per thread, one workspace each). The
    library uses `std::thread` and stays C++20. Measured 1.2-2.1x with 2 threads on this VM.
+   Tried TK4CPP::ThreadPool (C++23, from ClaudeTO80/TK4CPP, read-only) as an
+   optional executor, one batch block per task: on large batches it matches
+   std::thread (10.5 vs 10.1 ms for 1024 x 2048; 23.9 vs 24.1 ms for 4096 x 1024).
+   On repeated small batches it is about twice as fast (0.016 vs 0.035 ms for 64 x 8),
+   because the pool keeps its threads alive. The comparison is not like for like:
+   std::thread creates threads on each call. Not added to the library, since the core
+   stays C++20.
 9. 2D and 3D extensions: pending
