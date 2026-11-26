@@ -39,9 +39,15 @@ Status as of 0.1.0.
      27; 2197 from 79 to 27; 4004 from 75 to 34. Power-of-two lengths are unchanged.
      A first version with per-call tables was slower (zeroing local arrays per
      recursion node dominated); removing them was necessary.
+   - Measured, mixed-radix cost split (forward, double, shared VM), by removing
+     one part at a time in a scratch copy: the butterflies take 50-75% of the time
+     (for N=1001, about 24 of 32 ns per element); data movement and recursion take
+     20-35% (6-14 ns); the twiddle pass takes under 15% (about 5 ns at N=12000).
+     Fusing the twiddle pass into the butterfly pass would remove one write and
+     one read per level, an estimated gain of about 10%; not implemented.
    - Pending: SIMD kernels (not started; a portable version needs per-ISA code
-     paths and an MSVC build, so it is a separate decision), data movement between
-     mixed-radix passes, which is not yet measured separately, so Rader can cover
-     composite p-1, and per-stage tables for the direct DFT
+     paths and an MSVC build, so it is a separate decision), faster butterflies for
+     large odd factors (the main remaining cost), and per-stage tables for the
+     direct DFT
 8. Batch execution and parallelism: pending
 9. 2D and 3D extensions: pending
