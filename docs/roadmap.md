@@ -72,5 +72,5 @@ Status as of 0.1.0.
    axis; simple API `forward_2d`, `inverse_2d`, `forward_3d`, `inverse_3d`). Strided
    axes gather 8 adjacent lines per pass (`kLineBlock`). On this VM, 2D 1024x1024 takes
    16-22 ns per element with blocking against 24-32 without (five alternating runs,
-   faster in every pair). 3D 64x64x64 shows no reliable difference (about 15 ns per
-   element in both). Block size and the 3D case are not tuned further.
+   faster in every pair). 3D 64x64x64 is about 10% faster by median (19 against 21 ns per
+   element, thirteen alternating runs), within a noisy range. Block size and the 3D case are not tuned further.

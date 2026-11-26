@@ -127,7 +127,8 @@ The simple API provides `forward_2d`, `inverse_2d`, `forward_3d` and `inverse_3d
 Measured (double, shared 2-core VM, five alternating runs): a 2D 1024x1024 transform
 takes 16 to 22 ns per element with the blocked line gather (8 adjacent strided lines
 per pass), against 24 to 32 ns per element for the one-line-at-a-time gather. For 3D
-64x64x64 the difference is within the noise (about 15 ns per element in both versions).
+64x64x64 the blocked gather is about 10% faster by median (19 against 21 ns per element,
+thirteen alternating runs in total), with heavy noise on this VM.
 
 ### Real transforms
 
