@@ -1398,6 +1398,80 @@ static void test_filter_validation() {
         [&] { static_cast<void>(Spectrum::filter_real(x, 8.0, FT::LowPass, 1.0, -5.0)); }));
 }
 
+/**
+ * @brief Two separable cosines on exact 2D bins of a non-square plane are
+ *        separated exactly by the radial masks.
+ *
+ * With rows = 48 and cols = 64, the x-cosine (3 cycles along the row) has radius
+ * 3/64 = 0.046875 cycles/pixel and the y-cosine (5 cycles along the column) has
+ * radius 5/48 = 0.104166... cycles/pixel.
+ */
+static void test_filter_2d_separates_cosines() {
+    using FT = Spectrum::FilterType;
+    constexpr std::size_t rows = 48;
+    constexpr std::size_t cols = 64;
+    const double two_pi = 2.0 * std::numbers::pi;
+
+    std::vector<double> x_only(rows * cols), y_only(rows * cols), mix(rows * cols);
+    for (std::size_t y = 0; y < rows; ++y) {
+        for (std::size_t x = 0; x < cols; ++x) {
+            const double ax = std::cos(two_pi * 3.0 * static_cast<double>(x) / static_cast<double>(cols));
+            const double ay = std::cos(two_pi * 5.0 * static_cast<double>(y) / static_cast<double>(rows));
+            x_only[y * cols + x] = ax;
+            y_only[y * cols + x] = ay;
+            mix[y * cols + x] = ax + ay;
+        }
+    }
+
+    const double tol = 1e-10;
+    FFT_TEST_CHECK(max_real_error(Spectrum::filter_real_2d(mix, rows, cols, FT::LowPass, 0.07), x_only) < tol);
+    FFT_TEST_CHECK(max_real_error(Spectrum::filter_real_2d(mix, rows, cols, FT::HighPass, 0.07), y_only) < tol);
+    FFT_TEST_CHECK(max_real_error(Spectrum::filter_real_2d(mix, rows, cols, FT::BandPass, 0.08, 0.2), y_only) < tol);
+    FFT_TEST_CHECK(max_real_error(Spectrum::filter_real_2d(mix, rows, cols, FT::BandStop, 0.08, 0.2), x_only) < tol);
+}
+
+/**
+ * @brief Complementary 2D masks sum to the input, and a cutoff of 0.5 keeps every
+ *        bin on an odd-sized plane.
+ */
+static void test_filter_2d_complementary() {
+    using FT = Spectrum::FilterType;
+    constexpr std::size_t rows = 9;
+    constexpr std::size_t cols = 11;
+    const auto x = real_noise(rows * cols, 4242u);
+
+    const auto lp = Spectrum::filter_real_2d(x, rows, cols, FT::LowPass, 0.2);
+    const auto hp = Spectrum::filter_real_2d(x, rows, cols, FT::HighPass, 0.2);
+    std::vector<double> sum(x.size());
+    for (std::size_t i = 0; i < x.size(); ++i)
+        sum[i] = lp[i] + hp[i];
+    FFT_TEST_CHECK(max_real_error(sum, x) < 1e-11);
+
+    // Only sqrt(0.5) reaches the corner bins (largest radius), so it keeps every bin.
+    FFT_TEST_CHECK(max_real_error(Spectrum::filter_real_2d(x, rows, cols, FT::LowPass,
+                                                           std::sqrt(0.5)), x) < 1e-11);
+}
+
+/**
+ * @brief Invalid 2D inputs are rejected.
+ */
+static void test_filter_2d_validation() {
+    using FT = Spectrum::FilterType;
+    const std::vector<double> plane(12, 1.0);
+
+    FFT_TEST_CHECK(throws_exception<Spectrum::InvalidSizeException>(
+        [&] { static_cast<void>(Spectrum::filter_real_2d(plane, 0, 12, FT::LowPass, 0.1)); }));
+    FFT_TEST_CHECK(throws_exception<Spectrum::InvalidSizeException>(
+        [&] { static_cast<void>(Spectrum::filter_real_2d(plane, 3, 5, FT::LowPass, 0.1)); }));
+    FFT_TEST_CHECK(throws_exception<Spectrum::InvalidSizeException>(
+        [&] { static_cast<void>(Spectrum::filter_real_2d(plane, 3, 4, FT::LowPass, 0.75)); }));
+    FFT_TEST_CHECK(throws_exception<Spectrum::InvalidSizeException>(
+        [&] { static_cast<void>(Spectrum::filter_real_2d(plane, 3, 4, FT::BandStop, 0.3, 0.1)); }));
+    FFT_TEST_CHECK(throws_exception<Spectrum::InvalidSizeException>(
+        [&] { static_cast<void>(Spectrum::filter_real_2d(plane, 3, 4, FT::LowPass,
+                                                         std::numeric_limits<double>::quiet_NaN())); }));
+}
+
 int main() {
     test_simple_api();
     test_radix_kernels();
@@ -1450,6 +1524,9 @@ int main() {
     test_filter_complementary();
     test_filter_float();
     test_filter_validation();
+    test_filter_2d_separates_cosines();
+    test_filter_2d_complementary();
+    test_filter_2d_validation();
 
     if (g_failures != 0) {
         std::cerr << g_failures << " check(s) failed\n";

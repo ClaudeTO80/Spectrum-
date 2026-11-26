@@ -203,6 +203,24 @@ The mask is brick-wall, so a sinusoid that does not complete an integer number o
 over the record leaks into neighbouring bins, and sharp cutoffs produce ringing. A tone
 with an integer number of cycles over the record is separated exactly.
 
+For 2D planes (row-major, grayscale images), `Spectrum::filter_real_2d` applies the same
+four masks with a radial frequency in cycles per pixel. The cutoffs lie in `[0, sqrt(0.5)]`,
+the largest radius of the spectrum.
+
+### Image cleaning
+
+`examples/image_clean.cpp` loads an image with stb, filters each colour channel with
+`filter_real_2d` and saves the result. Alpha channels are left unchanged.
+
+```sh
+fft_image_clean noisy.png cleaned.png lowpass 0.1
+fft_image_clean photo.jpg  out.png     bandstop 0.2 0.4
+```
+
+The output format follows the extension (`.png`, `.jpg`/`.jpeg`, `.bmp`). stb is vendored
+in `3dParty/stb` with its provenance in `3dParty/README.md`. The library itself does not
+depend on stb.
+
 ### Workspace
 
 `plan.workspace_size()` reports the scratch elements that `execute()` needs:
