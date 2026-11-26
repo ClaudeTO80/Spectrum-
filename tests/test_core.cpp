@@ -961,6 +961,100 @@ static void test_real_simple_api() {
     FFT_TEST_CHECK(via_span == spectrum);
 }
 
+/**
+ * @brief Batch execution: sequential and threaded results equal single transforms.
+ */
+static void test_batch() {
+    const std::size_t sizes[] = {8, 1000};
+    for (std::size_t n : sizes) {
+        const std::size_t count = 5;
+        const std::size_t in_dist = n + 3;   // strided input
+        const std::size_t out_dist = n + 2;  // strided output, still non-overlapping
+        std::vector<std::complex<double>> in((count - 1) * in_dist + n);
+        const auto seed_values = make_input(in.size(), 11u + static_cast<std::uint32_t>(n));
+        in = seed_values;
+
+        fft::FFTPlan<double> plan(n);
+
+        // Reference: one transform at a time with the allocating overload.
+        std::vector<std::complex<double>> expected((count - 1) * out_dist + n);
+        for (std::size_t b = 0; b < count; ++b) {
+            std::vector<std::complex<double>> single(n);
+            plan.execute(fft::Direction::Forward, in.data() + b * in_dist, single.data());
+            std::copy(single.begin(), single.end(), expected.begin() + static_cast<std::ptrdiff_t>(b * out_dist));
+        }
+
+        fft::Workspace<double> ws;
+        std::vector<std::complex<double>> seq(expected.size());
+        plan.execute_batch(fft::Direction::Forward, in.data(), seq.data(), count, in_dist, out_dist, ws);
+        FFT_TEST_CHECK(seq == expected);
+
+        for (unsigned threads : {1u, 2u, 0u, 7u}) {
+            std::vector<std::complex<double>> par(expected.size());
+            plan.execute_batch(fft::Direction::Forward, in.data(), par.data(), count, in_dist, out_dist, threads);
+            // The output padding between transforms is not written, so compare only the transforms.
+            bool same = true;
+            for (std::size_t b = 0; b < count; ++b)
+                for (std::size_t k = 0; k < n; ++k)
+                    same = same && par[b * out_dist + k] == expected[b * out_dist + k];
+            FFT_TEST_CHECK(same);
+        }
+    }
+
+    // A single transform with more threads than work.
+    {
+        const std::size_t n = 16;
+        fft::FFTPlan<double> plan(n);
+        const auto in = make_input(n, 3u);
+        std::vector<std::complex<double>> out(n), ref(n);
+        plan.execute(fft::Direction::Inverse, in.data(), ref.data());
+        plan.execute_batch(fft::Direction::Inverse, in.data(), out.data(), 1, n, n, 4u);
+        FFT_TEST_CHECK(out == ref);
+    }
+
+    // Empty batch does nothing, even with null pointers.
+    {
+        fft::FFTPlan<double> plan(8);
+        plan.execute_batch(fft::Direction::Forward, nullptr, nullptr, 0, 8, 8, 2u);
+        fft::Workspace<double> ws;
+        plan.execute_batch(fft::Direction::Forward, nullptr, nullptr, 0, 8, 8, ws);
+        FFT_TEST_CHECK(true);
+    }
+
+    // Validation.
+    {
+        const std::size_t n = 8;
+        fft::FFTPlan<double> plan(n);
+        std::vector<std::complex<double>> buf(4 * n);
+        fft::Workspace<double> ws;
+        FFT_TEST_CHECK((throws_exception<fft::InvalidBufferException>(
+            [&] { plan.execute_batch(fft::Direction::Forward, nullptr, buf.data(), 2, n, n, ws); })));
+        FFT_TEST_CHECK((throws_exception<fft::InvalidBufferException>(
+            [&] { plan.execute_batch(fft::Direction::Forward, buf.data(), buf.data() + 2 * n, 2, n, n - 1, ws); })));
+        // Output stride too small for count > 1.
+        FFT_TEST_CHECK((throws_exception<fft::InvalidBufferException>(
+            [&] { plan.execute_batch(fft::Direction::Forward, buf.data(), buf.data() + 2 * n, 2, n, n - 1, 2u); })));
+        // Input extent overlaps output extent.
+        FFT_TEST_CHECK((throws_exception<fft::InvalidBufferException>(
+            [&] { plan.execute_batch(fft::Direction::Forward, buf.data(), buf.data() + n, 2, n, n, ws); })));
+        FFT_TEST_CHECK((throws_exception<fft::InvalidBufferException>(
+            [&] { plan.execute_batch(fft::Direction::Forward, buf.data(), buf.data() + n, 2, n, n, 2u); })));
+    }
+
+    // Moved-from plan rejects batches.
+    {
+        fft::FFTPlan<double> source(8);
+        fft::FFTPlan<double> target(std::move(source));
+        std::vector<std::complex<double>> buf(16);
+        fft::Workspace<double> ws;
+        FFT_TEST_CHECK((throws_exception<fft::FFTException>(
+            [&] { source.execute_batch(fft::Direction::Forward, buf.data(), buf.data() + 8, 1, 8, 8, ws); })));
+        FFT_TEST_CHECK((throws_exception<fft::FFTException>(
+            [&] { source.execute_batch(fft::Direction::Forward, buf.data(), buf.data() + 8, 1, 8, 8, 2u); })));
+        (void)target;
+    }
+}
+
 int main() {
     test_simple_api();
     test_radix_kernels();
@@ -988,6 +1082,7 @@ int main() {
     test_real_workspace_paths();
     test_real_validation();
     test_real_simple_api();
+    test_batch();
 
     if (g_failures != 0) {
         std::cerr << g_failures << " check(s) failed\n";

@@ -4,7 +4,9 @@
 #include <bit>
 #include <cmath>
 #include <cstdint>
+#include <exception>
 #include <numbers>
+#include <thread>
 #include <type_traits>
 #include <utility>
 #include <vector>
@@ -944,6 +946,108 @@ void FFTPlan<T>::execute(Direction direction,
         for (std::size_t k = 0; k < n; ++k)
             out[k] *= s;
     }
+}
+
+template<typename T>
+void FFTPlan<T>::execute_batch(Direction direction,
+                               const std::complex<T>* in,
+                               std::complex<T>* out,
+                               std::size_t count,
+                               std::size_t in_distance,
+                               std::size_t out_distance,
+                               Workspace<T>& workspace) const {
+    if (!impl_)
+        throw FFTException("FFTPlan::execute_batch() called on a moved-from plan");
+    if (count == 0)
+        return;
+    if (in == nullptr || out == nullptr)
+        throw InvalidBufferException("FFT batch buffers must not be null");
+
+    const std::size_t n = impl_->length;
+    if (count > 1 && out_distance < n)
+        throw InvalidBufferException("FFT batch output distance must be at least size()");
+    const std::size_t in_extent = (count - 1) * in_distance + n;
+    const std::size_t out_extent = (count - 1) * out_distance + n;
+    if (detail::ranges_overlap(in, in_extent * sizeof(std::complex<T>),
+                               out, out_extent * sizeof(std::complex<T>)))
+        throw InvalidBufferException("FFT batch input and output must not overlap");
+
+    for (std::size_t b = 0; b < count; ++b)
+        execute(direction, in + b * in_distance, out + b * out_distance, workspace);
+}
+
+template<typename T>
+void FFTPlan<T>::execute_batch(Direction direction,
+                               const std::complex<T>* in,
+                               std::complex<T>* out,
+                               std::size_t count,
+                               std::size_t in_distance,
+                               std::size_t out_distance,
+                               unsigned threads) const {
+    // Validate once for the whole batch, then split the work. The sequential
+    // overload repeats the same checks on the sub-batches, which cannot fail here.
+    if (!impl_)
+        throw FFTException("FFTPlan::execute_batch() called on a moved-from plan");
+    if (count == 0)
+        return;
+    if (in == nullptr || out == nullptr)
+        throw InvalidBufferException("FFT batch buffers must not be null");
+    if (count > 1 && out_distance < impl_->length)
+        throw InvalidBufferException("FFT batch output distance must be at least size()");
+    // Checked on the whole batch: a sub-batch of one transform cannot see an overlap
+    // between one thread's input and another thread's output.
+    const std::size_t n = impl_->length;
+    const std::size_t in_extent = (count - 1) * in_distance + n;
+    const std::size_t out_extent = (count - 1) * out_distance + n;
+    if (detail::ranges_overlap(in, in_extent * sizeof(std::complex<T>),
+                               out, out_extent * sizeof(std::complex<T>)))
+        throw InvalidBufferException("FFT batch input and output must not overlap");
+
+    if (threads == 0) {
+        threads = std::thread::hardware_concurrency();
+        if (threads == 0)
+            threads = 1;
+    }
+    if (threads > count)
+        threads = static_cast<unsigned>(count);
+
+    if (threads == 1) {
+        Workspace<T> workspace;
+        execute_batch(direction, in, out, count, in_distance, out_distance, workspace);
+        return;
+    }
+
+    std::vector<std::exception_ptr> errors(threads);
+    auto run_block = [&](unsigned t) {
+        const std::size_t begin = count * t / threads;
+        const std::size_t end = count * (t + 1) / threads;
+        try {
+            Workspace<T> workspace;
+            execute_batch(direction, in + begin * in_distance, out + begin * out_distance,
+                          end - begin, in_distance, out_distance, workspace);
+        } catch (...) {
+            errors[t] = std::current_exception();
+        }
+    };
+
+    std::vector<std::thread> workers;
+    workers.reserve(threads - 1);
+    try {
+        for (unsigned t = 1; t < threads; ++t)
+            workers.emplace_back(run_block, t);
+    } catch (...) {
+        // Thread creation failed: finish the blocks that did start, then report.
+        run_block(0);
+        for (auto& w : workers)
+            w.join();
+        throw;
+    }
+    run_block(0);
+    for (auto& w : workers)
+        w.join();
+    for (const auto& e : errors)
+        if (e)
+            std::rethrow_exception(e);
 }
 
 // Explicit instantiation definitions. Export comes from the class definition.

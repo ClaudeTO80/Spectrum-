@@ -149,6 +149,51 @@ public:
                  std::complex<T>* scratch,
                  std::size_t scratch_size) const;
 
+    /**
+     * @brief Executes @p count transforms of this plan's length, sequentially.
+     *
+     * Transform b reads size() elements at in + b*in_distance and writes size()
+     * elements at out + b*out_distance. A single workspace is reused for all of them.
+     *
+     * @param in           Input of the batch. Must not be null.
+     * @param out          Output of the batch. Must not be null.
+     * @param count        Number of transforms; zero does nothing.
+     * @param in_distance  Element distance between consecutive inputs.
+     * @param out_distance Element distance between consecutive outputs; must be at
+     *                     least size() when count > 1, so outputs do not overlap.
+     * @param workspace    Scratch memory, reused and possibly grown.
+     * @throws InvalidBufferException if a pointer is null, the output stride is too
+     *         small, or the input and output extents overlap.
+     * @throws FFTException if the plan was moved from.
+     */
+    void execute_batch(Direction direction,
+                       const std::complex<T>* in,
+                       std::complex<T>* out,
+                       std::size_t count,
+                       std::size_t in_distance,
+                       std::size_t out_distance,
+                       Workspace<T>& workspace) const;
+
+    /**
+     * @brief Executes a batch on several threads, with one workspace per thread.
+     *
+     * The batch is split into contiguous blocks, one per thread. The plan is
+     * immutable, so the threads share it without locking. Each thread allocates
+     * its own workspace of workspace_size() elements.
+     *
+     * @param threads Number of threads. Zero uses std::thread::hardware_concurrency(),
+     *                or 1 if that is unknown. Values above @p count are reduced to @p count.
+     * @throws as the sequential overload. If a worker throws, the first exception
+     *         is rethrown after all threads have finished.
+     */
+    void execute_batch(Direction direction,
+                       const std::complex<T>* in,
+                       std::complex<T>* out,
+                       std::size_t count,
+                       std::size_t in_distance,
+                       std::size_t out_distance,
+                       unsigned threads) const;
+
 private:
     struct Impl;
     std::unique_ptr<Impl> impl_;

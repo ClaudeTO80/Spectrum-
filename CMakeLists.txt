@@ -4,6 +4,8 @@ project(FFT VERSION 0.1.0 LANGUAGES CXX)
 include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
 
+find_package(Threads REQUIRED)
+
 option(FFT_BUILD_SHARED "Build shared library" ON)
 option(FFT_BUILD_STATIC "Build static library" ON)
 option(FFT_BUILD_TESTS "Build tests" ON)
@@ -61,6 +63,7 @@ if(FFT_BUILD_SHARED)
     add_library(FFTShared SHARED ${FFT_SOURCES} ${FFT_PUBLIC_HEADERS})
     target_compile_definitions(FFTShared PRIVATE FFT_BUILDING_LIBRARY)
     fft_configure_target(FFTShared)
+    target_link_libraries(FFTShared PUBLIC Threads::Threads)
     add_library(FFT::FFTShared ALIAS FFTShared)
     install(TARGETS FFTShared EXPORT FFTTargets
         RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
@@ -73,6 +76,7 @@ if(FFT_BUILD_STATIC)
     add_library(FFTStatic STATIC ${FFT_SOURCES} ${FFT_PUBLIC_HEADERS})
     target_compile_definitions(FFTStatic PUBLIC FFT_STATIC)
     fft_configure_target(FFTStatic)
+    target_link_libraries(FFTStatic PUBLIC Threads::Threads)
     add_library(FFT::FFTStatic ALIAS FFTStatic)
     install(TARGETS FFTStatic EXPORT FFTTargets
         ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}

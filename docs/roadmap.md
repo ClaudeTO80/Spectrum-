@@ -49,5 +49,7 @@ Status as of 0.1.0.
      paths and an MSVC build, so it is a separate decision), faster butterflies for
      large odd factors (the main remaining cost), and per-stage tables for the
      direct DFT
-8. Batch execution and parallelism: pending
+8. Batch execution and parallelism: **done** for a fixed length: `execute_batch` (sequential,
+   reusing a workspace) and the threaded overload (blocks per thread, one workspace each). The
+   library uses `std::thread` and stays C++20. Measured 1.2-2.1x with 2 threads on this VM.
 9. 2D and 3D extensions: pending
