@@ -232,11 +232,12 @@ void check_1d(std::size_t n, const char* label, std::uint32_t seed) {
 /**
  * @brief 2D radial low-pass on a dense rows x cols plane: quality and timing.
  *
- * The clean plane is the sum of a cosine along the columns, 37 cycles across the
- * width (radius 37/cols, kept by the cutoff 0.05), and a cosine along the rows,
+ * The clean plane is the sum of a cosine along the columns, x_cycles across the
+ * width (radius x_cycles/cols, kept by the cutoff 0.05), and a cosine along the rows,
  * 700 cycles down the height (radius about 0.34, removed).
  */
-void check_2d(std::size_t rows, std::size_t cols, const char* label, std::uint32_t seed) {
+void check_2d(std::size_t rows, std::size_t cols, double x_cycles, const char* label,
+              std::uint32_t seed) {
     using FT = Spectrum::FilterType;
     const double cutoff = 0.05; // cycles per pixel
     const double two_pi = 2.0 * std::numbers::pi;
@@ -245,7 +246,7 @@ void check_2d(std::size_t rows, std::size_t cols, const char* label, std::uint32
     std::vector<double> reference(pixels), clean(pixels);
     for (std::size_t y = 0; y < rows; ++y) {
         for (std::size_t x = 0; x < cols; ++x) {
-            const double kept = std::cos(two_pi * 37.0 * static_cast<double>(x) / static_cast<double>(cols));
+            const double kept = std::cos(two_pi * x_cycles * static_cast<double>(x) / static_cast<double>(cols));
             const double removed = std::cos(two_pi * 700.0 * static_cast<double>(y) / static_cast<double>(rows));
             reference[y * cols + x] = kept;
             clean[y * cols + x] = kept + removed;
@@ -296,8 +297,10 @@ int main() {
     check_1d(std::size_t{1} << 20, "1d lowpass 2^20", 101u);
     check_1d(1000000, "1d lowpass 1e6 (mixed radix)", 102u);
     check_1d(999983, "1d lowpass 999983 (prime)", 103u);
+    check_1d(999999, "1d lowpass 999999 (odd composite)", 105u);
     check_1d(std::size_t{1} << 22, "1d lowpass 2^22", 104u);
-    check_2d(2048, 1536, "2d lowpass 2048x1536", 201u);
+    check_2d(2048, 1536, 37.0, "2d lowpass 2048x1536", 201u);
+    check_2d(1000, 750, 20.0, "2d lowpass 1000x750 (non pow2)", 202u);
 
     if (g_failures != 0) {
         std::cerr << g_failures << " filter stress check(s) failed\n";
