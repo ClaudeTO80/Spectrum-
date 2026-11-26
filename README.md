@@ -1,5 +1,18 @@
 # Spectrum++
 
+<p align="center">
+  <img src="docs/assets/spectrum-logo.png" alt="Spectrum++ logo" width="520">
+</p>
+
+<p align="center">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green" alt="License: MIT"></a>
+  <a href="https://en.cppreference.com/w/cpp/20"><img src="https://img.shields.io/badge/C%2B%2B-20-blue?logo=cplusplus" alt="C++20"></a>
+  <a href="#status"><img src="https://img.shields.io/badge/status-early%20development-orange" alt="Status: early development"></a>
+  <a href="CMakeLists.txt"><img src="https://img.shields.io/badge/version-0.1.0-blue" alt="Version 0.1.0"></a>
+  <a href="https://github.com/ClaudeTO80/Spectrum-/actions/workflows/ci.yml"><img src="https://github.com/ClaudeTO80/Spectrum-/actions/workflows/ci.yml/badge.svg" alt="CI: tests passing"></a>
+  <a href="https://codecov.io/gh/ClaudeTO80/Spectrum-"><img src="https://codecov.io/gh/ClaudeTO80/Spectrum-/graph/badge.svg" alt="Test coverage"></a>
+</p>
+
 A standalone C++20 Fourier transform library, published under the `Spectrum` namespace. The current release implements
 complex one-dimensional transforms in single and double precision, with an
 architecture prepared for 2D and 3D transforms.
@@ -234,3 +247,7 @@ The exported target names are `FFT::FFTStatic` and `FFT::FFTShared`.
 ## License
 
 MIT. See [LICENSE](LICENSE).
+
+<p align="center">
+  <img src="docs/assets/spectrum-icon.png" alt="Spectrum++ icon" width="96">
+</p>
