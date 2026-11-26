@@ -12,7 +12,7 @@
 
 #include "exceptions.hpp"
 
-namespace fft {
+namespace Spectrum {
 
 /**
  * @brief Reusable scratch buffer of complex elements.
@@ -57,4 +57,4 @@ private:
     std::vector<std::complex<T>> storage_;
 };
 
-} // namespace fft
+} // namespace Spectrum

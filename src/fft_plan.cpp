@@ -14,7 +14,7 @@
 #include "fft/exceptions.hpp"
 #include "fft_internal.hpp"
 
-namespace fft {
+namespace Spectrum {
 
 namespace {
 
@@ -1054,4 +1054,4 @@ void FFTPlan<T>::execute_batch(Direction direction,
 template class FFTPlan<float>;
 template class FFTPlan<double>;
 
-} // namespace fft
+} // namespace Spectrum

@@ -15,7 +15,7 @@
 #include "types.hpp"
 #include "workspace.hpp"
 
-namespace fft {
+namespace Spectrum {
 
 /**
  * @brief Immutable plan for complex transforms over a row-major grid of rank Rank.
@@ -124,4 +124,4 @@ extern template class FFTPlanND<double, 1>;
 extern template class FFTPlanND<double, 2>;
 extern template class FFTPlanND<double, 3>;
 
-} // namespace fft
+} // namespace Spectrum

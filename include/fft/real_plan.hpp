@@ -14,7 +14,7 @@
 #include "types.hpp"
 #include "workspace.hpp"
 
-namespace fft {
+namespace Spectrum {
 
 /**
  * @brief Immutable plan for the real-to-complex (R2C) and complex-to-real (C2R)
@@ -152,4 +152,4 @@ private:
 extern template class RealFFTPlan<float>;
 extern template class RealFFTPlan<double>;
 
-} // namespace fft
+} // namespace Spectrum

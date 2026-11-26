@@ -8,7 +8,7 @@
  * transforms (forward_real, inverse_real) take a real sequence and return the
  * N/2+1 non-redundant spectrum bins. They use the
  * default normalization (forward unscaled, inverse divided by N), so that
- * fft::inverse(fft::forward(x)) reproduces x.
+ * Spectrum::inverse(Spectrum::forward(x)) reproduces x.
  *
  * Each call builds a new plan, so it recomputes the twiddle table. Lengths that
  * use the mixed-radix, Bluestein or Rader algorithms also allocate scratch
@@ -28,7 +28,7 @@
 #include "real_plan.hpp"
 #include "types.hpp"
 
-namespace fft {
+namespace Spectrum {
 
 /**
  * @brief Forward transform of a complex sequence.
@@ -215,4 +215,4 @@ template<std::floating_point T>
     return inverse_3d(std::span<const std::complex<T>>(input), rows, cols, depth);
 }
 
-} // namespace fft
+} // namespace Spectrum

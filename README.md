@@ -1,6 +1,19 @@
-# FFT
+# Spectrum++
 
-A standalone C++20 Fourier transform library. The current release implements
+<p align="center">
+  <img src="docs/assets/spectrum-logo.png" alt="Spectrum++ logo" width="520">
+</p>
+
+<p align="center">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green" alt="License: MIT"></a>
+  <a href="https://en.cppreference.com/w/cpp/20"><img src="https://img.shields.io/badge/C%2B%2B-20-blue?logo=cplusplus" alt="C++20"></a>
+  <a href="#status"><img src="https://img.shields.io/badge/status-early%20development-orange" alt="Status: early development"></a>
+  <a href="CMakeLists.txt"><img src="https://img.shields.io/badge/version-0.1.0-blue" alt="Version 0.1.0"></a>
+  <a href="https://github.com/ClaudeTO80/Spectrum-/actions/workflows/ci.yml"><img src="https://github.com/ClaudeTO80/Spectrum-/actions/workflows/ci.yml/badge.svg" alt="CI: tests passing"></a>
+  <a href="https://codecov.io/gh/ClaudeTO80/Spectrum-"><img src="https://codecov.io/gh/ClaudeTO80/Spectrum-/graph/badge.svg" alt="Test coverage"></a>
+</p>
+
+A standalone C++20 Fourier transform library, published under the `Spectrum` namespace. The current release implements
 complex one-dimensional transforms in single and double precision, with an
 architecture prepared for 2D and 3D transforms.
 
@@ -33,8 +46,8 @@ Not yet implemented: explicit SIMD kernels (see the roadmap for the evaluation).
 
 int main() {
     std::vector<std::complex<double>> x = {{1.0, 0.0}, {2.0, 0.0}, {3.0, 0.0}, {4.0, 0.0}};
-    auto X = fft::forward(x);   // forward transform, unscaled
-    auto y = fft::inverse(X);   // inverse transform, divided by N; y == x up to rounding
+    auto X = Spectrum::forward(x);   // forward transform, unscaled
+    auto y = Spectrum::inverse(X);   // inverse transform, divided by N; y == x up to rounding
 }
 ```
 
@@ -55,12 +68,12 @@ provide your own scratch memory:
 
 int main() {
     const std::size_t n = 360;
-    fft::FFTPlan<float> plan(n, fft::Normalization::Ortho);   // unitary scaling
+    Spectrum::FFTPlan<float> plan(n, Spectrum::Normalization::Ortho);   // unitary scaling
 
     std::vector<std::complex<float>> in(n), out(n);
-    fft::Workspace<float> ws(plan.workspace_size());          // scratch, reusable
+    Spectrum::Workspace<float> ws(plan.workspace_size());          // scratch, reusable
 
-    plan.execute(fft::Direction::Forward, in.data(), out.data(), ws);
+    plan.execute(Spectrum::Direction::Forward, in.data(), out.data(), ws);
 }
 ```
 
@@ -90,10 +103,10 @@ overload splits the batch into blocks, one per thread, each with its own workspa
 int main() {
     const std::size_t n = 1024, count = 256;
     std::vector<std::complex<double>> in(n * count, {1.0, 0.0}), out(n * count);
-    fft::FFTPlan<double> plan(n);
-    fft::Workspace<double> ws;
-    plan.execute_batch(fft::Direction::Forward, in.data(), out.data(), count, n, n, ws);
-    plan.execute_batch(fft::Direction::Forward, in.data(), out.data(), count, n, n, 0u);  // hardware threads
+    Spectrum::FFTPlan<double> plan(n);
+    Spectrum::Workspace<double> ws;
+    plan.execute_batch(Spectrum::Direction::Forward, in.data(), out.data(), count, n, n, ws);
+    plan.execute_batch(Spectrum::Direction::Forward, in.data(), out.data(), count, n, n, 0u);  // hardware threads
 }
 ```
 
@@ -104,7 +117,7 @@ The library links `Threads` on both targets. On 2 cores, two threads gave speedu
 
 ### Multidimensional transforms
 
-`fft::FFTPlanND<T, Rank>` transforms a row-major grid of any rank. Each axis is a
+`Spectrum::FFTPlanND<T, Rank>` transforms a row-major grid of any rank. Each axis is a
 1D transform, and the normalization is applied once over all elements. Explicit
 instantiations exist for ranks 1, 2 and 3, and both precisions.
 
@@ -117,9 +130,9 @@ instantiations exist for ranks 1, 2 and 3, and both precisions.
 int main() {
     const std::size_t rows = 64, cols = 48;
     std::vector<std::complex<double>> img(rows * cols, {1.0, 0.0});
-    fft::FFTPlanND<double, 2> plan(fft::Shape<2>({rows, cols}));
-    plan.execute_inplace(fft::Direction::Forward, img.data());  // DC is rows*cols
-    plan.execute_inplace(fft::Direction::Inverse, img.data());  // back to ones
+    Spectrum::FFTPlanND<double, 2> plan(Spectrum::Shape<2>({rows, cols}));
+    plan.execute_inplace(Spectrum::Direction::Forward, img.data());  // DC is rows*cols
+    plan.execute_inplace(Spectrum::Direction::Inverse, img.data());  // back to ones
 }
 ```
 
@@ -143,13 +156,13 @@ are returned. The basic API provides this directly:
 
 int main() {
     std::vector<double> signal(1000, 1.0);
-    auto spectrum = fft::forward_real(signal);      // 501 complex bins
-    auto back = fft::inverse_real(spectrum, 1000);  // equals signal
+    auto spectrum = Spectrum::forward_real(signal);      // 501 complex bins
+    auto back = Spectrum::inverse_real(spectrum, 1000);  // equals signal
     std::cout << spectrum.size() << ' ' << back[0] << '\n';
 }
 ```
 
-The advanced API is `fft::RealFFTPlan<T>`, with `execute_forward(const T*, complex<T>*)`
+The advanced API is `Spectrum::RealFFTPlan<T>`, with `execute_forward(const T*, complex<T>*)`
 and `execute_inverse(const complex<T>*, T*)`, and the same workspace overloads as
 `FFTPlan`. For even N it packs the input into an N/2-point complex transform, which
 costs about half of a complex transform of length N. For odd N it runs a full-length
@@ -166,7 +179,7 @@ the inverse.
 
 `RealFFTPlan::workspace_size()` is twice the inner length plus the inner plan's scratch.
 
-Pass a `fft::Workspace` to reuse its memory across calls, and across plans, as long
+Pass a `Spectrum::Workspace` to reuse its memory across calls, and across plans, as long
 as no two calls use it at the same time. The three-argument `execute()` creates a
 temporary workspace, so it allocates for the algorithms above.
 
@@ -206,6 +219,10 @@ ctest --test-dir build -C Release --output-on-failure
 cmake --install build --prefix install
 ```
 
+The test suite also includes stress tests with large inputs (up to 2^20 points in 1D,
+1024x1024 in 2D and 128^3 in 3D). They are built by default and take about 12 seconds in
+a Release build; to skip them, configure with `-DFFT_BUILD_STRESS_TESTS=OFF`.
+
 To build the timing tool used for performance work:
 
 ```bash
@@ -234,3 +251,7 @@ The exported target names are `FFT::FFTStatic` and `FFT::FFTShared`.
 ## License
 
 MIT. See [LICENSE](LICENSE).
+
+<p align="center">
+  <img src="docs/assets/spectrum-icon.png" alt="Spectrum++ icon" width="96">
+</p>
