@@ -1266,6 +1266,138 @@ static void test_nd_simple_api() {
         [&] { (void)Spectrum::forward_2d(x2, 0, cols); })));
 }
 
+/**
+ * @brief Real sinusoid with an integer number of cycles over @p n samples.
+ */
+static std::vector<double> real_tone(std::size_t n, double cycles, double amplitude) {
+    std::vector<double> x(n);
+    const double two_pi = 2.0 * std::numbers::pi;
+    for (std::size_t i = 0; i < n; ++i)
+        x[i] = amplitude * std::sin(two_pi * cycles * static_cast<double>(i) /
+                                    static_cast<double>(n));
+    return x;
+}
+
+/**
+ * @brief Deterministic real values in [-1, 1) for the filter tests.
+ */
+static std::vector<double> real_noise(std::size_t n, std::uint32_t seed) {
+    std::vector<double> x(n);
+    std::uint32_t state = seed;
+    for (auto& v : x) {
+        state = state * 1664525u + 1013904223u;
+        v = static_cast<double>(state) / 2147483648.0 - 1.0;
+    }
+    return x;
+}
+
+/**
+ * @brief Largest absolute difference between two real sequences of equal length.
+ */
+static double max_real_error(const std::vector<double>& a, const std::vector<double>& b) {
+    double err = 0.0;
+    for (std::size_t i = 0; i < a.size(); ++i)
+        err = std::max(err, std::abs(a[i] - b[i]));
+    return err;
+}
+
+/**
+ * @brief Two tones on exact bins (fs = N, so bin k is k Hz) are separated exactly
+ *        by each of the four mask types.
+ */
+static void test_filter_separates_tones() {
+    using FT = Spectrum::FilterType;
+    constexpr std::size_t n = 1024;
+    const double fs = 1024.0;
+    const auto low = real_tone(n, 10.0, 1.0);
+    const auto high = real_tone(n, 300.0, 0.5);
+    std::vector<double> mix(n);
+    for (std::size_t i = 0; i < n; ++i)
+        mix[i] = low[i] + high[i];
+
+    const double tol = 1e-10;
+    FFT_TEST_CHECK(max_real_error(Spectrum::filter_real(mix, fs, FT::LowPass, 100.0), low) < tol);
+    FFT_TEST_CHECK(max_real_error(Spectrum::filter_real(mix, fs, FT::HighPass, 100.0), high) < tol);
+    FFT_TEST_CHECK(max_real_error(Spectrum::filter_real(mix, fs, FT::BandPass, 200.0, 400.0), high) < tol);
+    FFT_TEST_CHECK(max_real_error(Spectrum::filter_real(mix, fs, FT::BandStop, 200.0, 400.0), low) < tol);
+}
+
+/**
+ * @brief Complementary masks sum to the input, and a full-band low-pass is the identity.
+ *        Uses an odd length and a non-integer bin frequency, so the test does not
+ *        depend on exact bin alignment.
+ */
+static void test_filter_complementary() {
+    using FT = Spectrum::FilterType;
+    constexpr std::size_t n = 1001;
+    const double fs = 1000.0;
+    const auto x = real_noise(n, 12345u);
+
+    const auto lp = Spectrum::filter_real(x, fs, FT::LowPass, 123.4);
+    const auto hp = Spectrum::filter_real(x, fs, FT::HighPass, 123.4);
+    const auto bp = Spectrum::filter_real(x, fs, FT::BandPass, 80.0, 250.0);
+    const auto bs = Spectrum::filter_real(x, fs, FT::BandStop, 80.0, 250.0);
+
+    std::vector<double> sum_lp(n), sum_bp(n);
+    for (std::size_t i = 0; i < n; ++i) {
+        sum_lp[i] = lp[i] + hp[i];
+        sum_bp[i] = bp[i] + bs[i];
+    }
+    FFT_TEST_CHECK(max_real_error(sum_lp, x) < 1e-11);
+    FFT_TEST_CHECK(max_real_error(sum_bp, x) < 1e-11);
+
+    // Cutoff at Nyquist keeps every bin, so the output is the input.
+    FFT_TEST_CHECK(max_real_error(Spectrum::filter_real(x, fs, FT::LowPass, fs / 2.0), x) < 1e-11);
+}
+
+/**
+ * @brief The float instantiation agrees with the double result to single precision.
+ */
+static void test_filter_float() {
+    using FT = Spectrum::FilterType;
+    constexpr std::size_t n = 1001;
+    const auto xd = real_noise(n, 777u);
+    std::vector<float> xf(n);
+    for (std::size_t i = 0; i < n; ++i)
+        xf[i] = static_cast<float>(xd[i]);
+
+    const auto ref = Spectrum::filter_real(xd, 1000.0, FT::LowPass, 123.4);
+    const auto got = Spectrum::filter_real(xf, 1000.0f, FT::LowPass, 123.4f);
+    double err = 0.0;
+    for (std::size_t i = 0; i < n; ++i)
+        err = std::max(err, std::abs(ref[i] - static_cast<double>(got[i])));
+    FFT_TEST_CHECK(err < 1e-4);
+}
+
+/**
+ * @brief Invalid inputs are rejected; the cutoff_high of a non-band mask is ignored.
+ */
+static void test_filter_validation() {
+    using FT = Spectrum::FilterType;
+    const std::vector<double> x(16, 1.0);
+    const std::vector<double> empty;
+    const double nan = std::numeric_limits<double>::quiet_NaN();
+
+    FFT_TEST_CHECK(throws_exception<Spectrum::InvalidSizeException>(
+        [&] { static_cast<void>(Spectrum::filter_real(empty, 8.0, FT::LowPass, 1.0)); }));
+    FFT_TEST_CHECK(throws_exception<Spectrum::InvalidSizeException>(
+        [&] { static_cast<void>(Spectrum::filter_real(x, 0.0, FT::LowPass, 1.0)); }));
+    FFT_TEST_CHECK(throws_exception<Spectrum::InvalidSizeException>(
+        [&] { static_cast<void>(Spectrum::filter_real(x, -8.0, FT::LowPass, 1.0)); }));
+    FFT_TEST_CHECK(throws_exception<Spectrum::InvalidSizeException>(
+        [&] { static_cast<void>(Spectrum::filter_real(x, 8.0, FT::LowPass, -0.5)); }));
+    FFT_TEST_CHECK(throws_exception<Spectrum::InvalidSizeException>(
+        [&] { static_cast<void>(Spectrum::filter_real(x, 8.0, FT::LowPass, 4.5)); }));
+    FFT_TEST_CHECK(throws_exception<Spectrum::InvalidSizeException>(
+        [&] { static_cast<void>(Spectrum::filter_real(x, 8.0, FT::LowPass, nan)); }));
+    FFT_TEST_CHECK(throws_exception<Spectrum::InvalidSizeException>(
+        [&] { static_cast<void>(Spectrum::filter_real(x, 8.0, FT::BandPass, 3.0, 2.0)); }));
+    FFT_TEST_CHECK(throws_exception<Spectrum::InvalidSizeException>(
+        [&] { static_cast<void>(Spectrum::filter_real(x, 8.0, FT::BandStop, 1.0, 5.0)); }));
+    FFT_TEST_CHECK(!throws_exception<Spectrum::InvalidSizeException>(
+        [&] { static_cast<void>(Spectrum::filter_real(x, 8.0, FT::LowPass, 1.0, -5.0)); }));
+}
+
 int main() {
     test_simple_api();
     test_radix_kernels();
@@ -1314,6 +1446,10 @@ int main() {
     test_nd_paths_and_rank1();
     test_nd_validation();
     test_nd_simple_api();
+    test_filter_separates_tones();
+    test_filter_complementary();
+    test_filter_float();
+    test_filter_validation();
 
     if (g_failures != 0) {
         std::cerr << g_failures << " check(s) failed\n";
