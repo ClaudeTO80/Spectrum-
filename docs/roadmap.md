@@ -45,7 +45,16 @@ Status as of 0.1.0.
      20-35% (6-14 ns); the twiddle pass takes under 15% (about 5 ns at N=12000).
      Fusing the twiddle pass into the butterfly pass would remove one write and
      one read per level, an estimated gain of about 10%; not implemented.
-   - Pending: SIMD kernels (not started; a portable version needs per-ISA code
+   - Evaluated SIMD (not implemented). Host: AVX2 and AVX-512. (1) Compiler
+     vectorization: -O3 -march=native gains 5-25% over -O2 on the current kernels.
+     (2) Split-array layout (re[], im[]) with the same radix-2 algorithm and
+     contiguous stage twiddles, auto-vectorized: 1.2-1.4x slower than the current
+     interleaved kernel at N=2048 and 8192. The likely cause is the first stages,
+     whose inner loops are 1 to 4 elements long and do not vectorize (hypothesis,
+     not profiled). A hand-written kernel would need x86 intrinsics, a NEON path,
+     a scalar fallback and MSVC testing, for a bounded gain. Not pursued for now.
+   - Pending: explicit SIMD kernels, only if vectorized across independent blocks
+     is designed (the first stages need it), with a fallback and an MSVC build
      paths and an MSVC build, so it is a separate decision), faster butterflies for
      large odd factors (the main remaining cost), and per-stage tables for the
      direct DFT
