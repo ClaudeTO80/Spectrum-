@@ -10,7 +10,7 @@
 #include <stdexcept>
 #include <string>
 
-namespace fft {
+namespace Spectrum {
 
 /** @brief Base class of all exceptions thrown by the library. */
 class FFTException : public std::runtime_error {
@@ -56,4 +56,4 @@ public:
     explicit PlanningException(const std::string& message) : FFTException(message) {}
 };
 
-} // namespace fft
+} // namespace Spectrum

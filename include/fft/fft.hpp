@@ -1,6 +1,6 @@
 #pragma once
 
-// Basic API: fft::forward, fft::inverse.
+// Basic API: Spectrum::forward, Spectrum::inverse.
 #include "simple.hpp"
 
 // Advanced API: explicit plans, normalization, algorithm selection, workspaces.

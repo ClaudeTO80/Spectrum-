@@ -9,8 +9,8 @@ int main() {
     const std::vector<std::complex<double>> samples = {
         {1.0, 0.0}, {2.0, 0.0}, {3.0, 0.0}, {4.0, 0.0}};
 
-    const auto spectrum = fft::forward(samples);
-    const auto restored = fft::inverse(spectrum);
+    const auto spectrum = Spectrum::forward(samples);
+    const auto restored = Spectrum::inverse(spectrum);
 
     for (std::size_t k = 0; k < spectrum.size(); ++k)
         std::printf("X[%zu] = %g %+gi   x[%zu] = %g\n",

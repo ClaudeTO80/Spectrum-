@@ -12,7 +12,7 @@
 
 #include "exceptions.hpp"
 
-namespace fft {
+namespace Spectrum {
 
 /**
  * @brief Extents of a transform of rank Rank.
@@ -75,4 +75,4 @@ private:
     dimensions_type dimensions_;
 };
 
-} // namespace fft
+} // namespace Spectrum

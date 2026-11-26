@@ -35,13 +35,13 @@ int main(int argc, char** argv) {
     for (std::size_t i = 0; i < n; ++i)
         in[i] = {std::sin(0.3 * static_cast<double>(i)), std::cos(0.9 * static_cast<double>(i))};
 
-    fft::FFTPlan<double> plan(n, fft::Normalization::None);
-    fft::Workspace<double> workspace(plan.workspace_size());
+    Spectrum::FFTPlan<double> plan(n, Spectrum::Normalization::None);
+    Spectrum::Workspace<double> workspace(plan.workspace_size());
 
     double best_ms = 1e300;
     for (int r = 0; r < reps; ++r) {
         const auto t0 = std::chrono::steady_clock::now();
-        plan.execute(fft::Direction::Forward, in.data(), out.data(), workspace);
+        plan.execute(Spectrum::Direction::Forward, in.data(), out.data(), workspace);
         const auto t1 = std::chrono::steady_clock::now();
         best_ms = std::min(best_ms, std::chrono::duration<double, std::milli>(t1 - t0).count());
     }

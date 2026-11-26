@@ -11,7 +11,7 @@
 
 #include "fft/types.hpp"
 
-namespace fft::detail {
+namespace Spectrum::detail {
 
 /**
  * @brief Scale factor applied to the unnormalized result of a transform.
@@ -45,4 +45,4 @@ inline bool ranges_overlap(const void* a, std::size_t abytes,
     return pa < pb + bbytes && pb < pa + abytes;
 }
 
-} // namespace fft::detail
+} // namespace Spectrum::detail

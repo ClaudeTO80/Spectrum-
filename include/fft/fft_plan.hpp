@@ -10,7 +10,7 @@
 #include "types.hpp"
 #include "workspace.hpp"
 
-namespace fft {
+namespace Spectrum {
 
 /**
  * @brief Immutable 1D complex FFT plan for a given precision.
@@ -204,4 +204,4 @@ private:
 extern template class FFTPlan<float>;
 extern template class FFTPlan<double>;
 
-} // namespace fft
+} // namespace Spectrum

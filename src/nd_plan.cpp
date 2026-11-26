@@ -22,7 +22,7 @@
 #include "fft/fft_plan.hpp"
 #include "fft_internal.hpp"
 
-namespace fft {
+namespace Spectrum {
 
 /**
  * @brief Number of adjacent lines transformed together along a strided axis.
@@ -201,4 +201,4 @@ template class FFTPlanND<double, 1>;
 template class FFTPlanND<double, 2>;
 template class FFTPlanND<double, 3>;
 
-} // namespace fft
+} // namespace Spectrum

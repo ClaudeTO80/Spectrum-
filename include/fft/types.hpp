@@ -10,7 +10,7 @@
 #include <cstddef>
 #include <cstdint>
 
-namespace fft {
+namespace Spectrum {
 
 /**
  * @brief Direction of a transform.
@@ -58,4 +58,4 @@ enum class Precision : std::uint8_t {
     Float64  ///< Double precision, plans of type double.
 };
 
-} // namespace fft
+} // namespace Spectrum

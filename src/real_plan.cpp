@@ -39,7 +39,7 @@ inline std::complex<T> cmul(std::complex<T> a, std::complex<T> b) {
 
 } // namespace
 
-namespace fft {
+namespace Spectrum {
 
 /**
  * @brief Internal state of RealFFTPlan.
@@ -290,4 +290,4 @@ void RealFFTPlan<T>::execute_inverse(const std::complex<T>* in, T* out,
 template class RealFFTPlan<float>;
 template class RealFFTPlan<double>;
 
-} // namespace fft
+} // namespace Spectrum
