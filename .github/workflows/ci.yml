@@ -45,7 +45,7 @@ jobs:
         run: pip install gcovr
 
       - name: Configure with coverage instrumentation
-        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_FLAGS="--coverage -O0" -DCMAKE_EXE_LINKER_FLAGS="--coverage" -DCMAKE_SHARED_LINKER_FLAGS="--coverage" -DFFT_BUILD_EXAMPLES=OFF
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_FLAGS="--coverage -O0" -DCMAKE_EXE_LINKER_FLAGS="--coverage" -DCMAKE_SHARED_LINKER_FLAGS="--coverage" -DFFT_BUILD_EXAMPLES=OFF -DFFT_BUILD_STRESS_TESTS=OFF
 
       - name: Build
         run: cmake --build build --parallel

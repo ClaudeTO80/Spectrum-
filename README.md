@@ -219,6 +219,10 @@ ctest --test-dir build -C Release --output-on-failure
 cmake --install build --prefix install
 ```
 
+The test suite also includes stress tests with large inputs (up to 2^20 points in 1D,
+1024x1024 in 2D and 128^3 in 3D). They are built by default and take about 12 seconds in
+a Release build; to skip them, configure with `-DFFT_BUILD_STRESS_TESTS=OFF`.
+
 To build the timing tool used for performance work:
 
 ```bash
