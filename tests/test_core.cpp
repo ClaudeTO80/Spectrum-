@@ -1,6 +1,7 @@
 #include <fft/fft.hpp>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <complex>
 #include <cstddef>
@@ -1055,6 +1056,216 @@ static void test_batch() {
     }
 }
 
+/**
+ * @brief Reference multidimensional DFT in long double, independent of the separable algorithm.
+ *
+ * Row-major layout: the last axis varies fastest. The sign follows reference_dft.
+ */
+static std::vector<std::complex<long double>> reference_nd(
+        const std::vector<std::complex<double>>& x,
+        const std::vector<std::size_t>& dims, int sign) {
+    const std::size_t total = x.size();
+    const long double pi = std::numbers::pi_v<long double>;
+    auto decode = [&dims](std::size_t index) {
+        std::vector<std::size_t> idx(dims.size());
+        for (std::size_t a = dims.size(); a-- > 0;) {
+            idx[a] = index % dims[a];
+            index /= dims[a];
+        }
+        return idx;
+    };
+    std::vector<std::complex<long double>> X(total);
+    for (std::size_t k = 0; k < total; ++k) {
+        const auto kidx = decode(k);
+        std::complex<long double> acc{0.0L, 0.0L};
+        for (std::size_t n = 0; n < total; ++n) {
+            const auto nidx = decode(n);
+            long double fraction = 0.0L;
+            for (std::size_t a = 0; a < dims.size(); ++a)
+                fraction += static_cast<long double>((kidx[a] * nidx[a]) % dims[a]) /
+                            static_cast<long double>(dims[a]);
+            const long double angle = sign * 2.0L * pi * fraction;
+            acc += std::complex<long double>(x[n].real(), x[n].imag()) *
+                   std::complex<long double>(std::cos(angle), std::sin(angle));
+        }
+        X[k] = acc;
+    }
+    return X;
+}
+
+/**
+ * @brief Multidimensional plans against the reference DFT, both directions, unscaled.
+ */
+template<std::size_t Rank>
+static void test_nd_reference(const std::array<std::size_t, Rank>& dims) {
+    std::size_t total = 1;
+    for (auto d : dims) total *= d;
+    const auto x = make_input(total, static_cast<std::uint32_t>(total) + 3u);
+    const std::vector<std::size_t> dv(dims.begin(), dims.end());
+
+    const fft::FFTPlanND<double, Rank> plan(fft::Shape<Rank>(dims), fft::Normalization::None);
+    FFT_TEST_CHECK(plan.size() == total);
+
+    std::vector<std::complex<double>> out(total);
+    plan.execute(fft::Direction::Forward, x.data(), out.data());
+    FFT_TEST_CHECK(max_abs_error(out, reference_nd(x, dv, -1)) < 1e-11 * static_cast<double>(total));
+
+    plan.execute(fft::Direction::Inverse, x.data(), out.data());
+    FFT_TEST_CHECK(max_abs_error(out, reference_nd(x, dv, +1)) < 1e-11 * static_cast<double>(total));
+}
+
+/**
+ * @brief Round trip with the default normalization, and Parseval with Ortho.
+ */
+static void test_nd_round_trip_and_parseval() {
+    const std::array<std::size_t, 2> d2[] = {{16, 15}, {64, 50}, {12, 10}};
+    for (const auto& dims : d2) {
+        const fft::FFTPlanND<double, 2> plan{fft::Shape<2>(dims)};
+        const std::size_t total = dims[0] * dims[1];
+        const auto x = make_input(total, 5u + static_cast<std::uint32_t>(total));
+        std::vector<std::complex<double>> X(total), back(total);
+        plan.execute(fft::Direction::Forward, x.data(), X.data());
+        plan.execute(fft::Direction::Inverse, X.data(), back.data());
+        double worst = 0.0;
+        for (std::size_t k = 0; k < total; ++k)
+            worst = std::max(worst, std::abs(back[k] - x[k]));
+        FFT_TEST_CHECK(worst < 1e-12 * static_cast<double>(total));
+    }
+
+    const std::array<std::size_t, 3> d3[] = {{4, 5, 6}, {2, 3, 4}};
+    for (const auto& dims : d3) {
+        const fft::FFTPlanND<double, 3> plan{fft::Shape<3>(dims)};
+        const std::size_t total = dims[0] * dims[1] * dims[2];
+        const auto x = make_input(total, 9u);
+        std::vector<std::complex<double>> X(total), back(total);
+        plan.execute(fft::Direction::Forward, x.data(), X.data());
+        plan.execute(fft::Direction::Inverse, X.data(), back.data());
+        double worst = 0.0;
+        for (std::size_t k = 0; k < total; ++k)
+            worst = std::max(worst, std::abs(back[k] - x[k]));
+        FFT_TEST_CHECK(worst < 1e-12 * static_cast<double>(total));
+    }
+
+    // Ortho is unitary: energy is preserved in both domains.
+    const std::array<std::size_t, 2> dims{12, 10};
+    const fft::FFTPlanND<double, 2> ortho(fft::Shape<2>(dims), fft::Normalization::Ortho);
+    const auto x = make_input(120, 21u);
+    std::vector<std::complex<double>> X(120);
+    ortho.execute(fft::Direction::Forward, x.data(), X.data());
+    double ex = 0.0, eX = 0.0;
+    for (std::size_t k = 0; k < 120; ++k) {
+        ex += std::norm(x[k]);
+        eX += std::norm(X[k]);
+    }
+    FFT_TEST_CHECK(std::abs(eX - ex) < 1e-10 * ex);
+}
+
+/**
+ * @brief Known spectra: an impulse at the origin is flat; a constant has only DC.
+ */
+static void test_nd_known_spectra() {
+    const std::array<std::size_t, 2> dims{3, 4};
+    const fft::FFTPlanND<double, 2> plan(fft::Shape<2>(dims), fft::Normalization::None);
+    std::vector<std::complex<double>> x(12, {0.0, 0.0}), X(12);
+    x[0] = {1.0, 0.0};
+    plan.execute(fft::Direction::Forward, x.data(), X.data());
+    for (const auto& v : X)
+        FFT_TEST_CHECK(std::abs(v - std::complex<double>(1.0, 0.0)) < 1e-12);
+
+    std::vector<std::complex<double>> ones(12, {1.0, 0.0});
+    plan.execute(fft::Direction::Forward, ones.data(), X.data());
+    FFT_TEST_CHECK(std::abs(X[0] - std::complex<double>(12.0, 0.0)) < 1e-12);
+    for (std::size_t k = 1; k < 12; ++k)
+        FFT_TEST_CHECK(std::abs(X[k]) < 1e-12);
+}
+
+/**
+ * @brief Rank 1 matches FFTPlan. In-place, out-of-place and workspace paths agree.
+ */
+static void test_nd_paths_and_rank1() {
+    const std::size_t n = 12;
+    const auto x = make_input(n, 4u);
+    const fft::FFTPlanND<double, 1> p1(fft::Shape<1>({n}));
+    const fft::FFTPlan<double> p(n);
+    std::vector<std::complex<double>> a(n), b(n);
+    p1.execute(fft::Direction::Forward, x.data(), a.data());
+    p.execute(fft::Direction::Forward, x.data(), b.data());
+    FFT_TEST_CHECK(max_abs_error(a, std::vector<std::complex<long double>>(b.begin(), b.end())) < 1e-12);
+
+    const fft::FFTPlanND<double, 2> plan(fft::Shape<2>({4, 6}));
+    const auto y = make_input(24, 8u);
+    std::vector<std::complex<double>> oop(24), inplace = y, ws_out(24), ws_inplace = y;
+    fft::Workspace<double> ws;
+    plan.execute(fft::Direction::Forward, y.data(), oop.data());
+    plan.execute_inplace(fft::Direction::Forward, inplace.data());
+    plan.execute(fft::Direction::Forward, y.data(), ws_out.data(), ws);
+    plan.execute_inplace(fft::Direction::Forward, ws_inplace.data(), ws);
+    FFT_TEST_CHECK(oop == inplace);
+    FFT_TEST_CHECK(oop == ws_out);
+    FFT_TEST_CHECK(oop == ws_inplace);
+}
+
+/**
+ * @brief Validation of buffers and the moved-from state.
+ */
+static void test_nd_validation() {
+    const fft::FFTPlanND<double, 2> plan(fft::Shape<2>({4, 4}));
+    std::vector<std::complex<double>> buf(16);
+    FFT_TEST_CHECK((throws_exception<fft::InvalidBufferException>(
+        [&] { plan.execute(fft::Direction::Forward, nullptr, buf.data()); })));
+    FFT_TEST_CHECK((throws_exception<fft::InvalidBufferException>(
+        [&] { plan.execute(fft::Direction::Forward, buf.data(), nullptr); })));
+    FFT_TEST_CHECK((throws_exception<fft::InvalidBufferException>(
+        [&] { plan.execute(fft::Direction::Forward, buf.data(), buf.data() + 4); })));
+    FFT_TEST_CHECK((throws_exception<fft::InvalidBufferException>(
+        [&] { plan.execute_inplace(fft::Direction::Forward, nullptr); })));
+
+    fft::FFTPlanND<double, 2> source(fft::Shape<2>({4, 4}), fft::Normalization::Ortho);
+    fft::FFTPlanND<double, 2> target(std::move(source));
+    FFT_TEST_CHECK(target.size() == 16);
+    FFT_TEST_CHECK(source.size() == 0);
+    FFT_TEST_CHECK(source.normalization() == fft::Normalization::None);
+    FFT_TEST_CHECK(source.workspace_size() == 0);
+    FFT_TEST_CHECK((throws_exception<fft::FFTException>(
+        [&] { source.execute_inplace(fft::Direction::Forward, buf.data()); })));
+    FFT_TEST_CHECK((throws_exception<fft::FFTException>(
+        [&] { (void)source.shape(); })));
+}
+
+/**
+ * @brief Simple 2D and 3D API: round trip, equality with the plan, size checks.
+ */
+static void test_nd_simple_api() {
+    const std::size_t rows = 6, cols = 10, depth = 4;
+    const auto x2 = make_input(rows * cols, 13u);
+    const auto X2 = fft::forward_2d(x2, rows, cols);
+    const auto back2 = fft::inverse_2d(X2, rows, cols);
+    double worst = 0.0;
+    for (std::size_t k = 0; k < x2.size(); ++k)
+        worst = std::max(worst, std::abs(back2[k] - x2[k]));
+    FFT_TEST_CHECK(worst < 1e-12);
+
+    const fft::FFTPlanND<double, 2> plan(fft::Shape<2>({rows, cols}));
+    std::vector<std::complex<double>> ref(x2.size());
+    plan.execute(fft::Direction::Forward, x2.data(), ref.data());
+    FFT_TEST_CHECK(X2 == ref);
+
+    const auto x3 = make_input(rows * cols * depth, 17u);
+    const auto X3 = fft::forward_3d(std::span<const std::complex<double>>(x3), rows, cols, depth);
+    const auto back3 = fft::inverse_3d(X3, rows, cols, depth);
+    worst = 0.0;
+    for (std::size_t k = 0; k < x3.size(); ++k)
+        worst = std::max(worst, std::abs(back3[k] - x3[k]));
+    FFT_TEST_CHECK(worst < 1e-12);
+
+    FFT_TEST_CHECK((throws_exception<fft::InvalidSizeException>(
+        [&] { (void)fft::forward_2d(x2, rows, cols + 1); })));
+    FFT_TEST_CHECK((throws_exception<fft::InvalidSizeException>(
+        [&] { (void)fft::inverse_3d(X3, rows, cols, depth + 1); })));
+    FFT_TEST_CHECK((throws_exception<fft::InvalidSizeException>(
+        [&] { (void)fft::forward_2d(x2, 0, cols); })));
+}
+
 int main() {
     test_simple_api();
     test_radix_kernels();
@@ -1083,6 +1294,22 @@ int main() {
     test_real_validation();
     test_real_simple_api();
     test_batch();
+    test_nd_reference(std::array<std::size_t, 2>{3, 4});
+    test_nd_reference(std::array<std::size_t, 2>{5, 6});
+    test_nd_reference(std::array<std::size_t, 2>{8, 8});
+    test_nd_reference(std::array<std::size_t, 2>{6, 10});
+    test_nd_reference(std::array<std::size_t, 2>{1, 7});
+    test_nd_reference(std::array<std::size_t, 2>{7, 1});
+    test_nd_reference(std::array<std::size_t, 2>{16, 15});
+    test_nd_reference(std::array<std::size_t, 3>{2, 3, 4});
+    test_nd_reference(std::array<std::size_t, 3>{4, 5, 3});
+    test_nd_reference(std::array<std::size_t, 3>{6, 1, 4});
+    test_nd_reference(std::array<std::size_t, 3>{3, 3, 3});
+    test_nd_round_trip_and_parseval();
+    test_nd_known_spectra();
+    test_nd_paths_and_rank1();
+    test_nd_validation();
+    test_nd_simple_api();
 
     if (g_failures != 0) {
         std::cerr << g_failures << " check(s) failed\n";

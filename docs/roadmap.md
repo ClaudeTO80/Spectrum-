@@ -68,4 +68,8 @@ Status as of 0.1.0.
    because the pool keeps its threads alive. The comparison is not like for like:
    std::thread creates threads on each call. Not added to the library, since the core
    stays C++20.
-9. 2D and 3D extensions: pending
+9. 2D and 3D extensions: **done** (`FFTPlanND<T, Rank>`, separable, one 1D plan per
+   axis; simple API `forward_2d`, `inverse_2d`, `forward_3d`, `inverse_3d`). Measured
+   on this VM: a 2D transform costs 1.1-1.4 times a 1D transform of the same size; 3D
+   64x64x64 takes about 21 ns per element. Blocked line gathers are a possible next
+   step, not implemented.

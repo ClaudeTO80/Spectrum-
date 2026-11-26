@@ -17,9 +17,9 @@ Implemented:
 - A basic one-call API and an advanced plan-based API.
 - Caller-owned workspaces for allocation-free execution.
 - Batch execution, sequential or on several threads.
+- Multidimensional complex transforms, ranks 1 to 3 (and any rank in the template).
 
-Not yet implemented: SIMD kernels, batch execution and parallelism, and 2D/3D
-transforms. See [docs/roadmap.md](docs/roadmap.md).
+Not yet implemented: explicit SIMD kernels (see the roadmap for the evaluation). See [docs/roadmap.md](docs/roadmap.md).
 
 ## Usage
 
@@ -101,6 +101,33 @@ Output transforms must not overlap (`out_distance >= size()` when `count > 1`), 
 input and output extents must not overlap. The plan is immutable, so threads share it.
 The library links `Threads` on both targets. On 2 cores, two threads gave speedups from
 1.2 to 2.1 on batches of 1000 to 4096 points (double, shared VM; the spread is run-to-run noise).
+
+### Multidimensional transforms
+
+`fft::FFTPlanND<T, Rank>` transforms a row-major grid of any rank. Each axis is a
+1D transform, and the normalization is applied once over all elements. Explicit
+instantiations exist for ranks 1, 2 and 3, and both precisions.
+
+```cpp
+#include <fft/fft.hpp>
+
+#include <complex>
+#include <vector>
+
+int main() {
+    const std::size_t rows = 64, cols = 48;
+    std::vector<std::complex<double>> img(rows * cols, {1.0, 0.0});
+    fft::FFTPlanND<double, 2> plan(fft::Shape<2>({rows, cols}));
+    plan.execute_inplace(fft::Direction::Forward, img.data());  // DC is rows*cols
+    plan.execute_inplace(fft::Direction::Inverse, img.data());  // back to ones
+}
+```
+
+The simple API provides `forward_2d`, `inverse_2d`, `forward_3d` and `inverse_3d`.
+Measured (double, shared VM): a 2D transform costs 1.1 to 1.4 times a 1D transform of
+the same size, and a 3D 64x64x64 transform takes about 21 ns per element. The line
+gather is strided, which accounts for the difference; blocking several lines per
+pass is the obvious next step and is not implemented.
 
 ### Real transforms
 

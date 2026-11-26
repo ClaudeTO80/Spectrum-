@@ -24,6 +24,7 @@
 #include <vector>
 
 #include "fft_plan.hpp"
+#include "nd_plan.hpp"
 #include "real_plan.hpp"
 #include "types.hpp"
 
@@ -120,6 +121,98 @@ template<std::floating_point T>
 [[nodiscard]] std::vector<T> inverse_real(const std::vector<std::complex<T>>& spectrum,
                                           std::size_t n) {
     return inverse_real(std::span<const std::complex<T>>(spectrum), n);
+}
+
+/**
+ * @brief Forward 2D transform of a row-major rows x cols grid.
+ * @throws InvalidSizeException if a dimension is zero or input.size() != rows*cols.
+ */
+template<std::floating_point T>
+[[nodiscard]] std::vector<std::complex<T>> forward_2d(std::span<const std::complex<T>> input,
+                                                      std::size_t rows, std::size_t cols) {
+    FFTPlanND<T, 2> plan(Shape<2>({rows, cols}), Normalization::Inverse);
+    if (input.size() != plan.size())
+        throw InvalidSizeException("forward_2d: input must hold rows*cols elements");
+    std::vector<std::complex<T>> output(input.begin(), input.end());
+    plan.execute_inplace(Direction::Forward, output.data());
+    return output;
+}
+
+/**
+ * @brief Inverse 2D transform, scaled by 1/(rows*cols).
+ * @throws InvalidSizeException if a dimension is zero or input.size() != rows*cols.
+ */
+template<std::floating_point T>
+[[nodiscard]] std::vector<std::complex<T>> inverse_2d(std::span<const std::complex<T>> input,
+                                                      std::size_t rows, std::size_t cols) {
+    FFTPlanND<T, 2> plan(Shape<2>({rows, cols}), Normalization::Inverse);
+    if (input.size() != plan.size())
+        throw InvalidSizeException("inverse_2d: input must hold rows*cols elements");
+    std::vector<std::complex<T>> output(input.begin(), input.end());
+    plan.execute_inplace(Direction::Inverse, output.data());
+    return output;
+}
+
+/**
+ * @brief Forward 3D transform of a row-major rows x cols x depth grid.
+ * @throws InvalidSizeException if a dimension is zero or input.size() != rows*cols*depth.
+ */
+template<std::floating_point T>
+[[nodiscard]] std::vector<std::complex<T>> forward_3d(std::span<const std::complex<T>> input,
+                                                      std::size_t rows, std::size_t cols,
+                                                      std::size_t depth) {
+    FFTPlanND<T, 3> plan(Shape<3>({rows, cols, depth}), Normalization::Inverse);
+    if (input.size() != plan.size())
+        throw InvalidSizeException("forward_3d: input must hold rows*cols*depth elements");
+    std::vector<std::complex<T>> output(input.begin(), input.end());
+    plan.execute_inplace(Direction::Forward, output.data());
+    return output;
+}
+
+/**
+ * @brief Inverse 3D transform, scaled by 1/(rows*cols*depth).
+ * @throws InvalidSizeException if a dimension is zero or input.size() != rows*cols*depth.
+ */
+template<std::floating_point T>
+[[nodiscard]] std::vector<std::complex<T>> inverse_3d(std::span<const std::complex<T>> input,
+                                                      std::size_t rows, std::size_t cols,
+                                                      std::size_t depth) {
+    FFTPlanND<T, 3> plan(Shape<3>({rows, cols, depth}), Normalization::Inverse);
+    if (input.size() != plan.size())
+        throw InvalidSizeException("inverse_3d: input must hold rows*cols*depth elements");
+    std::vector<std::complex<T>> output(input.begin(), input.end());
+    plan.execute_inplace(Direction::Inverse, output.data());
+    return output;
+}
+
+/** @brief Overload for std::vector; see forward_2d(std::span). */
+template<std::floating_point T>
+[[nodiscard]] std::vector<std::complex<T>> forward_2d(const std::vector<std::complex<T>>& input,
+                                                      std::size_t rows, std::size_t cols) {
+    return forward_2d(std::span<const std::complex<T>>(input), rows, cols);
+}
+
+/** @brief Overload for std::vector; see inverse_2d(std::span). */
+template<std::floating_point T>
+[[nodiscard]] std::vector<std::complex<T>> inverse_2d(const std::vector<std::complex<T>>& input,
+                                                      std::size_t rows, std::size_t cols) {
+    return inverse_2d(std::span<const std::complex<T>>(input), rows, cols);
+}
+
+/** @brief Overload for std::vector; see forward_3d(std::span). */
+template<std::floating_point T>
+[[nodiscard]] std::vector<std::complex<T>> forward_3d(const std::vector<std::complex<T>>& input,
+                                                      std::size_t rows, std::size_t cols,
+                                                      std::size_t depth) {
+    return forward_3d(std::span<const std::complex<T>>(input), rows, cols, depth);
+}
+
+/** @brief Overload for std::vector; see inverse_3d(std::span). */
+template<std::floating_point T>
+[[nodiscard]] std::vector<std::complex<T>> inverse_3d(const std::vector<std::complex<T>>& input,
+                                                      std::size_t rows, std::size_t cols,
+                                                      std::size_t depth) {
+    return inverse_3d(std::span<const std::complex<T>>(input), rows, cols, depth);
 }
 
 } // namespace fft

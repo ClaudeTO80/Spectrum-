@@ -14,6 +14,9 @@ dimension, size-validation and memory-layout concepts.
 - **Planner** (`src/fft_plan.cpp`, `FFTPlan` constructor): selects the algorithm
   from the length and precomputes twiddles, permutations, per-stage tables, chirp
   and kernel data for the chosen algorithm.
+- **Multidimensional transforms** (`src/nd_plan.cpp`, `FFTPlanND`): one unscaled 1D plan per
+  axis, applied to strided lines copied through a contiguous buffer. Normalization is applied once
+  over the total element count.
 - **Real transforms** (`src/real_plan.cpp`, `RealFFTPlan`): packs real input into a
   complex inner plan of length N/2 (even N) or N (odd N), then applies the
   Hermitian post-processing or pre-processing pass.
